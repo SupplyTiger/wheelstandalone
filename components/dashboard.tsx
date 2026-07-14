@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, Link2, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { Activity, Link2, LogOut, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { AuthCard } from "@/components/auth-card";
 import type { AccountSnapshot, OptionContract, ScreenerCandidate, WheelPosition } from "@/lib/types";
 import { dteFromExpiry, fmtPct, fmtUsd } from "@/lib/wheel/math";
@@ -280,6 +280,9 @@ export function Dashboard({ userEmail, account, positions, watchlist, isConfigur
             <h1 className="text-2xl font-semibold text-ink">Treasury command center</h1>
           </div>
           <div className="flex items-center gap-2">
+            <span className="hidden max-w-[220px] truncate rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-muted md:inline">
+              {userEmail}
+            </span>
             <button
               className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
               onClick={connectSnapTrade}
@@ -296,6 +299,15 @@ export function Dashboard({ userEmail, account, positions, watchlist, isConfigur
               <RefreshCw size={16} />
               Sync
             </button>
+            <form action="/auth/signout" method="post">
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
+                type="submit"
+              >
+                <LogOut size={16} />
+                Sign out
+              </button>
+            </form>
           </div>
         </div>
       </header>
