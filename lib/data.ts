@@ -4,6 +4,12 @@ import { env } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const defaultWatchlist = ["AAPL", "AMD", "MSFT", "NVDA", "PLTR", "SLV"];
+const requiredSnapTradeEnv = [
+  "SNAPTRADE_CLIENT_ID",
+  "SNAPTRADE_CONSUMER_KEY",
+  "SNAPTRADE_USER_ID",
+  "SNAPTRADE_USER_SECRET"
+] as const;
 
 export const fallbackAccount: AccountSnapshot = {
   accountValue: 0,
@@ -15,16 +21,20 @@ export const fallbackAccount: AccountSnapshot = {
   syncedAt: null
 };
 
+function missingSnapTradeEnv() {
+  return requiredSnapTradeEnv.filter((name) => !env[name]);
+}
+
 export async function getDashboardData() {
   const supabase = createSupabaseServerClient();
   if (!supabase) {
     return {
-      userEmail: null,
+      userEmail: "Local dashboard",
       account: fallbackAccount,
       positions: [] as WheelPosition[],
       watchlist: defaultWatchlist,
       isConfigured: false,
-      missingSnapTradeEnv: [] as string[]
+      missingSnapTradeEnv: missingSnapTradeEnv()
     };
   }
 
@@ -33,12 +43,12 @@ export async function getDashboardData() {
 
   if (!user) {
     return {
-      userEmail: null,
+      userEmail: "Dashboard",
       account: fallbackAccount,
       positions: [] as WheelPosition[],
       watchlist: defaultWatchlist,
       isConfigured: true,
-      missingSnapTradeEnv: [] as string[]
+      missingSnapTradeEnv: missingSnapTradeEnv()
     };
   }
 
@@ -89,19 +99,12 @@ export async function getDashboardData() {
   });
 
   const watchlist = (watchlistResult.data ?? []).map((row) => row.ticker);
-  const missingSnapTradeEnv = [
-    "SNAPTRADE_CLIENT_ID",
-    "SNAPTRADE_CONSUMER_KEY",
-    "SNAPTRADE_USER_ID",
-    "SNAPTRADE_USER_SECRET"
-  ].filter((name) => !env[name as keyof typeof env]);
-
   return {
     userEmail: effective.isLocalDev ? `${user.email ?? "local dev"} (local dev)` : user.email ?? null,
     account,
     positions,
     watchlist: watchlist.length ? watchlist : defaultWatchlist,
     isConfigured: true,
-    missingSnapTradeEnv
+    missingSnapTradeEnv: missingSnapTradeEnv()
   };
 }
