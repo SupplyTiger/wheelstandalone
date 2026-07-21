@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Activity, Link2, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Link2, Plus, RefreshCw, Search, ShieldCheck, Trash2, WalletCards, X } from "lucide-react";
 import type { AccountSnapshot, OptionContract, ScreenerCandidate, WheelPosition } from "@/lib/types";
 import { dteFromExpiry, fmtPct, fmtUsd } from "@/lib/wheel/math";
 
@@ -24,10 +24,18 @@ type ScanStatus = {
   lastMessage: string;
 };
 
+type ActiveTab = "dashboard" | "watchlist";
+
+const watchlistStorageKey = "wheel.watchlist.v1";
+const defaultManagerWatchlist = ["AAPL", "AMD", "MSFT", "NVDA", "PLTR", "SLV"];
+
 export function Dashboard({ userEmail, account, positions, watchlist, missingSnapTradeEnv = [] }: DashboardProps) {
   const [liveAccount, setLiveAccount] = useState(account);
   const [livePositions, setLivePositions] = useState(positions);
   const [tickers, setTickers] = useState(watchlist.join(", "));
+  const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
+  const [newTicker, setNewTicker] = useState("");
+  const [bulkWatchlist, setBulkWatchlist] = useState(watchlist.join(", "));
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([]);
   const [status, setStatus] = useState("");
   const [isScanning, setIsScanning] = useState(false);
@@ -49,8 +57,54 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
     () => livePositions.filter((pos) => pos.kind !== "stock" && pos.expiry && dteFromExpiry(pos.expiry) <= 7).length,
     [livePositions]
   );
+  const watchlistSymbols = useMemo(() => parseWatchlist(tickers), [tickers]);
+  const holdingsSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          livePositions
+            .map((pos) => pos.ticker.trim().toUpperCase())
+            .filter((ticker) => ticker && ticker !== "SPAXX")
+        )
+      ).sort(),
+    [livePositions]
+  );
   const floorGap = liveAccount.accountValue - liveAccount.floor;
   const scanProgressPct = scanStatus.total ? Math.round((scanStatus.completed / scanStatus.total) * 100) : 0;
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(watchlistStorageKey);
+    if (!saved) return;
+    const symbols = parseWatchlist(saved);
+    if (symbols.length) {
+      setWatchlistSymbols(symbols);
+      setBulkWatchlist(symbols.join(", "));
+    }
+  }, []);
+
+  useEffect(() => {
+    setBulkWatchlist(watchlistSymbols.join(", "));
+    window.localStorage.setItem(watchlistStorageKey, watchlistSymbols.join(", "));
+  }, [watchlistSymbols]);
+
+  function setWatchlistSymbols(symbols: string[]) {
+    setTickers(uniqueSymbols(symbols).join(", "));
+  }
+
+  function addTicker() {
+    const symbols = parseWatchlist(newTicker);
+    if (!symbols.length) return;
+    setWatchlistSymbols([...watchlistSymbols, ...symbols]);
+    setNewTicker("");
+  }
+
+  function removeTicker(ticker: string) {
+    setWatchlistSymbols(watchlistSymbols.filter((symbol) => symbol !== ticker));
+  }
+
+  function applyBulkWatchlist() {
+    setWatchlistSymbols(parseWatchlist(bulkWatchlist));
+  }
 
   async function syncSnapTrade() {
     if (missingSnapTradeEnv.length) {
@@ -88,11 +142,7 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
     setIsScanning(true);
     try {
       setStatus("Scanning watchlist through server-side yfinance routes...");
-      const symbols = tickers
-        .split(",")
-        .map((ticker) => ticker.trim().toUpperCase())
-        .filter(Boolean)
-        .slice(0, 16);
+      const symbols = watchlistSymbols.slice(0, 16);
 
       const rows: ScreenerCandidate[] = [];
       const progress = {
@@ -322,157 +372,176 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
           <Metric label="Action Needed" value={String(atRisk)} tone={atRisk ? "danger" : "success"} />
         </section>
 
-        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-lg border border-line bg-panel shadow-soft">
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <div>
-                <h2 className="font-semibold text-ink">Position review</h2>
-                <p className="text-xs text-muted">
-                  {liveAccount.source ?? "not connected"} {liveAccount.syncedAt ? `- ${new Date(liveAccount.syncedAt).toLocaleString()}` : ""}
-                </p>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[780px] text-left text-sm">
-                <thead className="border-b border-line bg-slate-50 text-xs uppercase text-muted">
-                  <tr>
-                    <th className="px-4 py-3">Symbol</th>
-                    <th className="px-4 py-3">Kind</th>
-                    <th className="px-4 py-3 text-right">Qty</th>
-                    <th className="px-4 py-3 text-right">Mark</th>
-                    <th className="px-4 py-3 text-right">P&L</th>
-                    <th className="px-4 py-3">Expiry</th>
-                    <th className="px-4 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {livePositions.length ? (
-                    livePositions.map((pos) => (
-                      <tr key={pos.id ?? `${pos.symbol}-${pos.expiry}`} className="border-b border-line last:border-0">
-                        <td className="px-4 py-3 font-semibold text-ink">{pos.symbol ?? pos.ticker}</td>
-                        <td className="px-4 py-3 capitalize text-muted">{pos.kind}</td>
-                        <td className="px-4 py-3 text-right tabular">{pos.quantity}</td>
-                        <td className="px-4 py-3 text-right tabular">{fmtUsd(pos.price)}</td>
-                        <td className="px-4 py-3 text-right tabular">{fmtUsd(pos.gainUsd, true)}</td>
-                        <td className="px-4 py-3 text-muted">{pos.expiry ?? "-"}</td>
-                        <td className="px-4 py-3">
-                          <StatusPill tone={pos.expiry && dteFromExpiry(pos.expiry) <= 7 ? "danger" : "success"}>
-                            {pos.expiry && dteFromExpiry(pos.expiry) <= 7 ? "Review" : "OK"}
-                          </StatusPill>
-                        </td>
+        <div className="mt-6 flex flex-wrap items-center gap-2 border-b border-line">
+          <TabButton active={activeTab === "dashboard"} onClick={() => setActiveTab("dashboard")}>
+            Dashboard
+          </TabButton>
+          <TabButton active={activeTab === "watchlist"} onClick={() => setActiveTab("watchlist")}>
+            Watchlist manager
+          </TabButton>
+        </div>
+
+        {activeTab === "dashboard" ? (
+          <>
+            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="rounded-lg border border-line bg-panel shadow-soft">
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                  <div>
+                    <h2 className="font-semibold text-ink">Position review</h2>
+                    <p className="text-xs text-muted">
+                      {liveAccount.source ?? "not connected"} {liveAccount.syncedAt ? `- ${new Date(liveAccount.syncedAt).toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[780px] text-left text-sm">
+                    <thead className="border-b border-line bg-slate-50 text-xs uppercase text-muted">
+                      <tr>
+                        <th className="px-4 py-3">Symbol</th>
+                        <th className="px-4 py-3">Kind</th>
+                        <th className="px-4 py-3 text-right">Qty</th>
+                        <th className="px-4 py-3 text-right">Mark</th>
+                        <th className="px-4 py-3 text-right">P&L</th>
+                        <th className="px-4 py-3">Expiry</th>
+                        <th className="px-4 py-3">Status</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-muted">
-                        No positions synced yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <aside className="rounded-lg border border-line bg-panel p-4 shadow-soft">
-            <h2 className="font-semibold text-ink">Wheel screener</h2>
-            <p className="mt-1 text-sm text-muted">Server-side yfinance scan for CSP candidates.</p>
-            <label className="mt-4 block text-xs font-semibold uppercase text-muted" htmlFor="watchlist">
-              Watchlist
-            </label>
-            <textarea
-              id="watchlist"
-              className="mt-2 min-h-28 w-full rounded-md border border-line p-3 text-sm outline-none focus:border-accent"
-              value={tickers}
-              onChange={(event) => setTickers(event.target.value)}
-            />
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <label className="block text-xs font-semibold uppercase text-muted" htmlFor="dte-min">
-                DTE Min
-                <input
-                  id="dte-min"
-                  type="number"
-                  min={1}
-                  className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
-                  value={dteMin}
-                  onChange={(event) => setDteMin(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs font-semibold uppercase text-muted" htmlFor="dte-max">
-                DTE Max
-                <input
-                  id="dte-max"
-                  type="number"
-                  min={1}
-                  className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
-                  value={dteMax}
-                  onChange={(event) => setDteMax(Number(event.target.value))}
-                />
-              </label>
-              <label className="block text-xs font-semibold uppercase text-muted" htmlFor="min-roi">
-                Min ROI
-                <input
-                  id="min-roi"
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
-                  value={minRoi}
-                  onChange={(event) => setMinRoi(Number(event.target.value))}
-                />
-              </label>
-            </div>
-            <button
-              onClick={runScan}
-              disabled={isScanning}
-              className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              <Search size={16} />
-              {isScanning ? "Scanning" : "Run screener"}
-            </button>
-            {status ? <p className="mt-3 text-sm text-muted">{status}</p> : null}
-            {scanStatus.total > 0 ? (
-              <div className="mt-3 rounded-md border border-line bg-slate-50 p-3">
-                <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase text-muted">
-                  <span>{isScanning ? `Scanning ${scanStatus.currentTicker || "..."}` : "Scanner"}</span>
-                  <span className="tabular">
-                    {scanStatus.completed}/{scanStatus.total}
-                  </span>
+                    </thead>
+                    <tbody>
+                      {livePositions.length ? (
+                        livePositions.map((pos) => (
+                          <tr key={pos.id ?? `${pos.symbol}-${pos.expiry}`} className="border-b border-line last:border-0">
+                            <td className="px-4 py-3 font-semibold text-ink">{pos.symbol ?? pos.ticker}</td>
+                            <td className="px-4 py-3 capitalize text-muted">{pos.kind}</td>
+                            <td className="px-4 py-3 text-right tabular">{pos.quantity}</td>
+                            <td className="px-4 py-3 text-right tabular">{fmtUsd(pos.price)}</td>
+                            <td className="px-4 py-3 text-right tabular">{fmtUsd(pos.gainUsd, true)}</td>
+                            <td className="px-4 py-3 text-muted">{pos.expiry ?? "-"}</td>
+                            <td className="px-4 py-3">
+                              <StatusPill tone={pos.expiry && dteFromExpiry(pos.expiry) <= 7 ? "danger" : "success"}>
+                                {pos.expiry && dteFromExpiry(pos.expiry) <= 7 ? "Review" : "OK"}
+                              </StatusPill>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-10 text-center text-muted">
+                            No positions synced yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white ring-1 ring-line">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{ width: `${scanProgressPct}%` }}
-                  />
-                </div>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                  <span className="rounded bg-white px-2 py-1 text-success ring-1 ring-line">
-                    Found <b className="tabular">{scanStatus.candidates}</b>
-                  </span>
-                  <span className="rounded bg-white px-2 py-1 text-warning ring-1 ring-line">
-                    Blocked <b className="tabular">{scanStatus.blocked}</b>
-                  </span>
-                  <span className="rounded bg-white px-2 py-1 text-danger ring-1 ring-line">
-                    Errors <b className="tabular">{scanStatus.errors}</b>
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-muted">{scanStatus.lastMessage}</p>
               </div>
-            ) : null}
-            {missingSnapTradeEnv.length ? (
-              <p className="mt-3 rounded-md bg-amber-50 p-3 text-sm text-warning">
-                SnapTrade sync is disabled until these environment variables are set: {missingSnapTradeEnv.join(", ")}.
-              </p>
-            ) : null}
-          </aside>
-        </section>
 
-        <section className="mt-6 rounded-lg border border-line bg-panel shadow-soft">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="font-semibold text-ink">CSP candidates</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] text-left text-sm">
+              <aside className="rounded-lg border border-line bg-panel p-4 shadow-soft">
+                <h2 className="font-semibold text-ink">Wheel screener</h2>
+                <p className="mt-1 text-sm text-muted">Server-side yfinance scan for CSP candidates.</p>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase text-muted">Watchlist</span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("watchlist")}
+                    className="h-8 rounded-md border border-line bg-white px-3 text-xs font-semibold text-ink"
+                  >
+                    Manage
+                  </button>
+                </div>
+                <div className="mt-2 flex min-h-28 flex-wrap content-start gap-2 rounded-md border border-line bg-white p-3">
+                  {watchlistSymbols.map((ticker) => (
+                    <span key={ticker} className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-ink">
+                      {ticker}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <label className="block text-xs font-semibold uppercase text-muted" htmlFor="dte-min">
+                    DTE Min
+                    <input
+                      id="dte-min"
+                      type="number"
+                      min={1}
+                      className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
+                      value={dteMin}
+                      onChange={(event) => setDteMin(Number(event.target.value))}
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold uppercase text-muted" htmlFor="dte-max">
+                    DTE Max
+                    <input
+                      id="dte-max"
+                      type="number"
+                      min={1}
+                      className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
+                      value={dteMax}
+                      onChange={(event) => setDteMax(Number(event.target.value))}
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold uppercase text-muted" htmlFor="min-roi">
+                    Min ROI
+                    <input
+                      id="min-roi"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      className="mt-1 h-9 w-full rounded-md border border-line px-2 text-sm font-normal text-ink outline-none focus:border-accent"
+                      value={minRoi}
+                      onChange={(event) => setMinRoi(Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+                <button
+                  onClick={runScan}
+                  disabled={isScanning || !watchlistSymbols.length}
+                  className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  <Search size={16} />
+                  {isScanning ? "Scanning" : "Run screener"}
+                </button>
+                {status ? <p className="mt-3 text-sm text-muted">{status}</p> : null}
+                {scanStatus.total > 0 ? (
+                  <div className="mt-3 rounded-md border border-line bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase text-muted">
+                      <span>{isScanning ? `Scanning ${scanStatus.currentTicker || "..."}` : "Scanner"}</span>
+                      <span className="tabular">
+                        {scanStatus.completed}/{scanStatus.total}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-white ring-1 ring-line">
+                      <div
+                        className="h-full rounded-full bg-accent transition-all"
+                        style={{ width: `${scanProgressPct}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                      <span className="rounded bg-white px-2 py-1 text-success ring-1 ring-line">
+                        Found <b className="tabular">{scanStatus.candidates}</b>
+                      </span>
+                      <span className="rounded bg-white px-2 py-1 text-warning ring-1 ring-line">
+                        Blocked <b className="tabular">{scanStatus.blocked}</b>
+                      </span>
+                      <span className="rounded bg-white px-2 py-1 text-danger ring-1 ring-line">
+                        Errors <b className="tabular">{scanStatus.errors}</b>
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted">{scanStatus.lastMessage}</p>
+                  </div>
+                ) : null}
+                {missingSnapTradeEnv.length ? (
+                  <p className="mt-3 rounded-md bg-amber-50 p-3 text-sm text-warning">
+                    SnapTrade sync is disabled until these environment variables are set: {missingSnapTradeEnv.join(", ")}.
+                  </p>
+                ) : null}
+              </aside>
+            </section>
+
+            <section className="mt-6 rounded-lg border border-line bg-panel shadow-soft">
+              <div className="border-b border-line px-4 py-3">
+                <h2 className="font-semibold text-ink">CSP candidates</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1320px] text-left text-sm">
               <thead className="border-b border-line bg-slate-50 text-xs uppercase text-muted">
                 <tr>
                   <th className="px-4 py-3">Ticker</th>
@@ -533,7 +602,123 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
               </tbody>
             </table>
           </div>
-        </section>
+            </section>
+          </>
+        ) : (
+          <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="rounded-lg border border-line bg-panel shadow-soft">
+              <div className="border-b border-line px-4 py-3">
+                <h2 className="font-semibold text-ink">Watchlist manager</h2>
+                <p className="text-xs text-muted">{watchlistSymbols.length} symbols feeding the CSP screener.</p>
+              </div>
+              <div className="p-4">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    aria-label="Add ticker"
+                    className="h-10 flex-1 rounded-md border border-line px-3 text-sm uppercase outline-none focus:border-accent"
+                    placeholder="Add ticker"
+                    value={newTicker}
+                    onChange={(event) => setNewTicker(event.target.value.toUpperCase())}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") addTicker();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={addTicker}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white"
+                  >
+                    <Plus size={16} />
+                    Add
+                  </button>
+                </div>
+
+                <div className="mt-4 flex min-h-24 flex-wrap content-start gap-2 rounded-md border border-line bg-slate-50 p-3">
+                  {watchlistSymbols.length ? (
+                    watchlistSymbols.map((ticker) => (
+                      <button
+                        key={ticker}
+                        type="button"
+                        onClick={() => removeTicker(ticker)}
+                        className="inline-flex h-8 items-center gap-2 rounded-md bg-white px-2 text-sm font-semibold text-ink ring-1 ring-line"
+                      >
+                        {ticker}
+                        <X size={14} />
+                      </button>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted">No symbols selected.</span>
+                  )}
+                </div>
+
+                <label className="mt-4 block text-xs font-semibold uppercase text-muted" htmlFor="bulk-watchlist">
+                  Bulk edit
+                </label>
+                <textarea
+                  id="bulk-watchlist"
+                  className="mt-2 min-h-32 w-full rounded-md border border-line p-3 text-sm uppercase outline-none focus:border-accent"
+                  value={bulkWatchlist}
+                  onChange={(event) => setBulkWatchlist(event.target.value.toUpperCase())}
+                />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={applyBulkWatchlist}
+                    className="h-9 rounded-md bg-ink px-3 text-sm font-semibold text-white"
+                  >
+                    Apply changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistSymbols(defaultManagerWatchlist)}
+                    className="h-9 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink"
+                  >
+                    Reset defaults
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWatchlistSymbols([])}
+                    className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-danger"
+                  >
+                    <Trash2 size={15} />
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <aside className="rounded-lg border border-line bg-panel p-4 shadow-soft">
+              <h2 className="font-semibold text-ink">Watchlist sources</h2>
+              <div className="mt-4 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setWatchlistSymbols([...watchlistSymbols, ...holdingsSymbols])}
+                  disabled={!holdingsSymbols.length}
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-left text-sm font-semibold text-ink disabled:opacity-60"
+                >
+                  Add synced holdings
+                  <span className="mt-1 block text-xs font-normal text-muted">{holdingsSymbols.length} available from positions.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWatchlistSymbols(["AAPL", "AMD", "AMZN", "AVGO", "GOOGL", "META", "MSFT", "NVDA", "QCOM", "TSLA"])}
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-left text-sm font-semibold text-ink"
+                >
+                  Megacap tech
+                  <span className="mt-1 block text-xs font-normal text-muted">Liquid names commonly used for CSP scans.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWatchlistSymbols(["RGTI", "LUNR", "PLTR", "SOFI", "HOOD", "COIN", "MSTR", "SMCI", "MRVL", "SLV"])}
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-left text-sm font-semibold text-ink"
+                >
+                  High IV watch
+                  <span className="mt-1 block text-xs font-normal text-muted">More aggressive names for premium screening.</span>
+                </button>
+              </div>
+            </aside>
+          </section>
+        )}
       </div>
     </main>
   );
@@ -545,6 +730,34 @@ function estimateIvRank(options: OptionContract[], price: number): number | null
     .sort((a, b) => Math.abs(a.strike - price) - Math.abs(b.strike - price))[0];
   if (!atmPut?.impliedVolatility) return null;
   return Math.min(100, atmPut.impliedVolatility * 100);
+}
+
+function parseWatchlist(value: string) {
+  return uniqueSymbols(value.split(/[\s,]+/));
+}
+
+function uniqueSymbols(symbols: string[]) {
+  return Array.from(
+    new Set(
+      symbols
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter((symbol) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol))
+    )
+  );
+}
+
+function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-10 border-b-2 px-3 text-sm font-semibold ${
+        active ? "border-accent text-accent" : "border-transparent text-muted hover:text-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
 }
 
 function scoreCspCandidate(input: {
