@@ -50,9 +50,20 @@ export async function getSnapLoginLink() {
   return response.data as { redirectURI?: string };
 }
 
+function symbolText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value;
+  if (!value || typeof value !== "object") return null;
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["raw_symbol", "rawSymbol", "ticker", "symbol", "code", "description", "name"]) {
+    const found = symbolText(record[key]);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function mapSnapPosition(raw: Record<string, unknown>) {
-  const symbol = raw.symbol as Record<string, unknown> | undefined;
-  const rawSymbol = (symbol?.raw_symbol ?? symbol?.symbol ?? raw.symbol) as string | undefined;
+  const rawSymbol = symbolText(raw.symbol) ?? symbolText(raw.ticker) ?? symbolText(raw.description);
   const ticker = String(rawSymbol ?? "UNKNOWN").split(" ")[0].toUpperCase();
   const units = Number(raw.units ?? raw.quantity ?? 0);
   const price = Number(raw.price ?? raw.last_price ?? 0);
@@ -61,7 +72,7 @@ export function mapSnapPosition(raw: Record<string, unknown>) {
 
   return {
     ticker,
-    symbol: String(rawSymbol ?? ticker),
+    symbol: rawSymbol ?? ticker,
     kind: "stock" as const,
     side: units < 0 ? ("short" as const) : ("long" as const),
     quantity: units,

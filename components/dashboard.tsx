@@ -25,6 +25,8 @@ type ScanStatus = {
 };
 
 export function Dashboard({ userEmail, account, positions, watchlist, missingSnapTradeEnv = [] }: DashboardProps) {
+  const [liveAccount, setLiveAccount] = useState(account);
+  const [livePositions, setLivePositions] = useState(positions);
   const [tickers, setTickers] = useState(watchlist.join(", "));
   const [candidates, setCandidates] = useState<ScreenerCandidate[]>([]);
   const [status, setStatus] = useState("");
@@ -42,12 +44,12 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
     lastMessage: ""
   });
 
-  const totalGain = useMemo(() => positions.reduce((sum, pos) => sum + (pos.gainUsd ?? 0), 0), [positions]);
+  const totalGain = useMemo(() => livePositions.reduce((sum, pos) => sum + (pos.gainUsd ?? 0), 0), [livePositions]);
   const atRisk = useMemo(
-    () => positions.filter((pos) => pos.kind !== "stock" && pos.expiry && dteFromExpiry(pos.expiry) <= 7).length,
-    [positions]
+    () => livePositions.filter((pos) => pos.kind !== "stock" && pos.expiry && dteFromExpiry(pos.expiry) <= 7).length,
+    [livePositions]
   );
-  const floorGap = account.accountValue - account.floor;
+  const floorGap = liveAccount.accountValue - liveAccount.floor;
   const scanProgressPct = scanStatus.total ? Math.round((scanStatus.completed / scanStatus.total) * 100) : 0;
 
   async function syncSnapTrade() {
@@ -62,8 +64,9 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
       setStatus(data.error ?? "SnapTrade sync failed");
       return;
     }
-    setStatus(`Synced ${data.positionCount} positions. Refreshing...`);
-    window.location.reload();
+    if (data.account) setLiveAccount(data.account);
+    if (Array.isArray(data.positions)) setLivePositions(data.positions);
+    setStatus(`Synced ${data.positionCount} positions${data.persisted ? " and saved to Supabase" : " locally"}.`);
   }
 
   async function connectSnapTrade() {
@@ -161,8 +164,8 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
           const wk52Pos = typeof data.technicals?.wk52_pos === "number" ? data.technicals.wk52_pos : null;
           const maxPainGapPct = maxPain ? ((strike - maxPain) / maxPain) * 100 : null;
           const rule6 = quote.changePct === null ? "UNKNOWN" : quote.changePct < 0 ? "RED" : "GREEN";
-          const capacity = account.cashSecuredPutCapacity ?? account.buyingPower ?? account.accountValue;
-          const concentrationPct = account.accountValue ? ((strike * 100) / account.accountValue) * 100 : 0;
+          const capacity = liveAccount.cashSecuredPutCapacity ?? liveAccount.buyingPower ?? liveAccount.accountValue;
+          const concentrationPct = liveAccount.accountValue ? ((strike * 100) / liveAccount.accountValue) * 100 : 0;
           const gate0 = capacity > 0 && price > capacity * 0.2 ? "BLOCK" : concentrationPct > 20 ? "WARN" : "PASS";
           const optionVolume = put.volume ?? null;
           const score = scoreCspCandidate({
@@ -302,7 +305,7 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
 
       <div className="mx-auto max-w-7xl px-6 py-6">
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <Metric icon={<WalletCards size={18} />} label="Broker Total" value={fmtUsd(account.accountValue)} />
+          <Metric icon={<WalletCards size={18} />} label="Broker Total" value={fmtUsd(liveAccount.accountValue)} />
           <Metric
             icon={<ShieldCheck size={18} />}
             label="Floor Cushion"
@@ -315,7 +318,7 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
             value={fmtUsd(totalGain, true)}
             tone={totalGain >= 0 ? "success" : "danger"}
           />
-          <Metric icon={<Search size={18} />} label="Positions" value={String(positions.length)} />
+          <Metric icon={<Search size={18} />} label="Positions" value={String(livePositions.length)} />
           <Metric label="Action Needed" value={String(atRisk)} tone={atRisk ? "danger" : "success"} />
         </section>
 
@@ -325,7 +328,7 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
               <div>
                 <h2 className="font-semibold text-ink">Position review</h2>
                 <p className="text-xs text-muted">
-                  {account.source ?? "not connected"} {account.syncedAt ? `- ${new Date(account.syncedAt).toLocaleString()}` : ""}
+                  {liveAccount.source ?? "not connected"} {liveAccount.syncedAt ? `- ${new Date(liveAccount.syncedAt).toLocaleString()}` : ""}
                 </p>
               </div>
             </div>
@@ -343,8 +346,8 @@ export function Dashboard({ userEmail, account, positions, watchlist, missingSna
                   </tr>
                 </thead>
                 <tbody>
-                  {positions.length ? (
-                    positions.map((pos) => (
+                  {livePositions.length ? (
+                    livePositions.map((pos) => (
                       <tr key={pos.id ?? `${pos.symbol}-${pos.expiry}`} className="border-b border-line last:border-0">
                         <td className="px-4 py-3 font-semibold text-ink">{pos.symbol ?? pos.ticker}</td>
                         <td className="px-4 py-3 capitalize text-muted">{pos.kind}</td>

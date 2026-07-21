@@ -2,6 +2,7 @@ import { getSnapAccounts, getSnapBalances, getSnapOptionPositions, getSnapPositi
 import { getEffectiveUser } from "@/lib/dev-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import type { AccountSnapshot } from "@/lib/types";
 import { NextResponse } from "next/server";
 
 function numericFromBalances(balances: unknown, names: string[]) {
@@ -23,17 +24,6 @@ function accountNumber(account: Record<string, unknown>) {
 
 export async function POST() {
   try {
-    const supabase = createSupabaseServerClient();
-    if (!supabase) {
-      return NextResponse.json({ error: "Supabase is not configured" }, { status: 500 });
-    }
-
-    const effective = await getEffectiveUser(supabase);
-    const { user } = effective;
-    if (!user) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-
     const accounts = await getSnapAccounts();
     const configuredAccountNumbers = [
       env.SNAPTRADE_PRIMARY_ACCOUNT_NUMBER,
@@ -78,6 +68,32 @@ export async function POST() {
     const buyingPower = syncedAccounts.reduce((sum, payload) => {
       return sum + (numericFromBalances(payload.balances, ["buying_power", "buyingPower"]) ?? 0);
     }, 0);
+    const account: AccountSnapshot = {
+      accountValue,
+      floor: accountValue * 0.65,
+      cash,
+      buyingPower,
+      cashSecuredPutCapacity: cash || buyingPower,
+      source: "snaptrade",
+      syncedAt: new Date().toISOString()
+    };
+
+    const supabase = createSupabaseServerClient();
+    const effective = supabase ? await getEffectiveUser(supabase) : null;
+    const user = effective?.user ?? null;
+
+    if (!effective || !user) {
+      return NextResponse.json({
+        account,
+        positions,
+        accountValue,
+        cash,
+        buyingPower,
+        accountCount: syncedAccounts.length,
+        positionCount: positions.length,
+        persisted: false
+      });
+    }
 
     await effective.supabase.from("positions").delete().eq("user_id", user.id);
     if (positions.length) {
@@ -103,21 +119,24 @@ export async function POST() {
 
     await effective.supabase.from("account_snapshots").insert({
       user_id: user.id,
-      account_value: accountValue,
-      floor: accountValue * 0.65,
-      cash,
-      buying_power: buyingPower,
-      cash_secured_put_capacity: cash ?? buyingPower,
-      source: "snaptrade",
-      synced_at: new Date().toISOString()
+      account_value: account.accountValue,
+      floor: account.floor,
+      cash: account.cash,
+      buying_power: account.buyingPower,
+      cash_secured_put_capacity: account.cashSecuredPutCapacity,
+      source: account.source,
+      synced_at: account.syncedAt
     });
 
     return NextResponse.json({
+      account,
+      positions,
       accountValue,
       cash,
       buyingPower,
       accountCount: syncedAccounts.length,
-      positionCount: positions.length
+      positionCount: positions.length,
+      persisted: true
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 });
