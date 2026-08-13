@@ -79,6 +79,20 @@ export type ScreenerCandidate = {
   gate0: "PASS" | "WARN" | "BLOCK";
   score: number;
   decisionReason: string;
+  earningsDate?: string | null;
+  earningsDte?: number | null;
+  exDividendDate?: string | null;
+  exDividendDte?: number | null;
+  calendarWarnings?: string[];
+};
+
+export type CorporateEvents = {
+  earningsDate: string | null;
+  earningsDte: number | null;
+  exDividendDate: string | null;
+  exDividendDte: number | null;
+  source: string;
+  warning?: string | null;
 };
 
 export type GateResult = {

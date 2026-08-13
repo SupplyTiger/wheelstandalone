@@ -1,4 +1,5 @@
-import type { OptionContract, QuoteSnapshot } from "@/lib/types";
+import type { CorporateEvents, OptionContract, QuoteSnapshot } from "@/lib/types";
+import { dteFromExpiry } from "@/lib/wheel/math";
 
 const YAHOO_BASE = "https://query1.finance.yahoo.com";
 const USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36";
@@ -265,4 +266,60 @@ export async function getExpirationDates(ticker: string): Promise<number[]> {
     { crumb: true }
   );
   return data.optionChain?.result?.[0]?.expirationDates ?? [];
+}
+
+function dateFromUnix(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return new Date(value * 1000).toISOString().slice(0, 10);
+}
+
+export async function getCorporateEvents(ticker: string): Promise<CorporateEvents> {
+  const symbol = ticker.trim().toUpperCase();
+  const empty: CorporateEvents = {
+    earningsDate: null,
+    earningsDte: null,
+    exDividendDate: null,
+    exDividendDte: null,
+    source: "yahoo.quoteSummary",
+    warning: "Corporate calendar unavailable; verify manually before opening a CSP or covered call."
+  };
+
+  if (!symbol) return empty;
+
+  type QuoteSummaryResponse = {
+    quoteSummary?: {
+      result?: Array<{
+        calendarEvents?: {
+          earnings?: {
+            earningsDate?: Array<{ raw?: number }>;
+          };
+        };
+        summaryDetail?: {
+          exDividendDate?: { raw?: number };
+        };
+      }>;
+      error?: unknown;
+    };
+  };
+
+  try {
+    const data = await yahooFetch<QuoteSummaryResponse>(
+      `/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=calendarEvents,summaryDetail`,
+      { crumb: true }
+    );
+    const result = data.quoteSummary?.result?.[0];
+    const earningsDate = dateFromUnix(result?.calendarEvents?.earnings?.earningsDate?.[0]?.raw);
+    const exDividendDate = dateFromUnix(result?.summaryDetail?.exDividendDate?.raw);
+
+    return {
+      earningsDate,
+      earningsDte: earningsDate ? dteFromExpiry(earningsDate) : null,
+      exDividendDate,
+      exDividendDte: exDividendDate ? dteFromExpiry(exDividendDate) : null,
+      source: "yahoo.quoteSummary",
+      warning: earningsDate || exDividendDate ? null : empty.warning
+    };
+  } catch {
+    return empty;
+  }
 }

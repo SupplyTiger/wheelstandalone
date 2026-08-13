@@ -50,37 +50,54 @@ export async function getSnapLoginLink() {
   return response.data as { redirectURI?: string };
 }
 
-function symbolText(value: unknown): string | null {
-  if (typeof value === "string" && value.trim()) return value;
-  if (!value || typeof value !== "object") return null;
-
-  const record = value as Record<string, unknown>;
-  for (const key of ["raw_symbol", "rawSymbol", "ticker", "symbol", "code", "description", "name"]) {
-    const found = symbolText(record[key]);
-    if (found) return found;
+function symbolText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  for (const key of ["raw_symbol", "symbol", "ticker"]) {
+    const direct = row[key];
+    if (typeof direct === "string") return direct;
+    const nested = symbolText(direct);
+    if (nested) return nested;
   }
-  return null;
+  return undefined;
+}
+
+function booleanField(value: unknown, key: string): boolean {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  if (row[key] === true) return true;
+  return Object.values(row).some((child) => booleanField(child, key));
 }
 
 export function mapSnapPosition(raw: Record<string, unknown>) {
-  const rawSymbol = symbolText(raw.symbol) ?? symbolText(raw.ticker) ?? symbolText(raw.description);
+  const instrument = ((raw.instrument as Record<string, unknown> | undefined) ??
+    (typeof raw.symbol === "object" ? raw.symbol : undefined)) as Record<string, unknown> | undefined;
+
+  const rawSymbol = symbolText(instrument) ?? symbolText(raw.symbol);
   const ticker = String(rawSymbol ?? "UNKNOWN").split(" ")[0].toUpperCase();
+  const instrumentKind = String(instrument?.kind ?? raw.kind ?? "").toLowerCase();
+  if (booleanField(instrument, "cash_equivalent") || ticker === "SPAXX" || (instrumentKind === "mutualfund" && ticker === "SPAXX")) {
+    return null;
+  }
   const units = Number(raw.units ?? raw.quantity ?? 0);
   const price = Number(raw.price ?? raw.last_price ?? 0);
-  const averagePurchasePrice = Number(raw.average_purchase_price ?? raw.averagePurchasePrice ?? 0);
+  const averagePurchasePrice = Number(raw.average_purchase_price ?? raw.averagePurchasePrice ?? raw.cost_basis ?? 0);
   const marketValue = Number(raw.market_value ?? raw.marketValue ?? Math.abs(units) * price);
+  const gainUsd =
+    typeof raw.open_pnl === "number" ? raw.open_pnl : averagePurchasePrice ? (price - averagePurchasePrice) * units : null;
 
   return {
     ticker,
-    symbol: rawSymbol ?? ticker,
+    symbol: String(rawSymbol ?? ticker),
     kind: "stock" as const,
     side: units < 0 ? ("short" as const) : ("long" as const),
     quantity: units,
     price,
     avgCost: averagePurchasePrice,
     currentValue: marketValue,
-    gainUsd: typeof raw.open_pnl === "number" ? raw.open_pnl : null,
-    gainPct: typeof raw.fractional_units === "number" ? raw.fractional_units : null
+    gainUsd,
+    gainPct: averagePurchasePrice ? ((price - averagePurchasePrice) / averagePurchasePrice) * 100 : null
   };
 }
 

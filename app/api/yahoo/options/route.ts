@@ -1,4 +1,5 @@
 import { calculateMaxPain, dteFromExpiry } from "@/lib/wheel/math";
+import { getCorporateEvents } from "@/lib/integrations/yahoo";
 import { getYfinanceSnapshot } from "@/lib/integrations/yfinance";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -13,7 +14,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "ticker is required" }, { status: 400 });
     }
 
-    const snapshot = await getYfinanceSnapshot(ticker, expiry, dteMin, dteMax);
+    const [snapshot, corporateEvents] = await Promise.all([
+      getYfinanceSnapshot(ticker, expiry, dteMin, dteMax),
+      getCorporateEvents(ticker)
+    ]);
     const symbol = snapshot.ticker;
     const quote = snapshot.quote;
     const options = snapshot.options;
@@ -28,6 +32,7 @@ export async function GET(request: NextRequest) {
       })),
       selectedExpiry: snapshot.selectedExpiry,
       selectedExpiries: snapshot.selectedExpiries ?? [],
+      corporateEvents,
       maxPain,
       optionsError: null,
       options
