@@ -1,0 +1,90 @@
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --border: #e5e5e2;
+  --ink: #1a1a18;
+  --muted: #767671;
+  --green: #1a7a4c;
+  --green-bg: #e8f5ee;
+  --red: #b3261e;
+  --red-bg: #fbeceb;
+  --amber: #8a6100;
+  --amber-bg: #fbf1dc;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}
+
+.page { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+.header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+.header .eyebrow { font-size: 10px; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; }
+.header h1 { font-size: 20px; margin: 2px 0 0; }
+.header .meta { font-size: 12px; color: var(--muted); }
+
+.layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.panel h2 { font-size: 13px; margin: 0 0 12px; display: flex; align-items: center; gap: 6px; }
+
+label.field { display: block; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; margin-top: 10px; }
+textarea, input[type="number"] {
+  width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px;
+  font-size: 12.5px; font-family: inherit; background: #fff; color: var(--ink);
+}
+textarea { min-height: 64px; resize: vertical; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+.checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; }
+.hint { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+
+button.run {
+  width: 100%; margin-top: 14px; background: var(--ink); color: #fff; border: none;
+  border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+button.run:disabled { opacity: 0.5; cursor: default; }
+
+.scan-status { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+
+.candidates-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.candidates-header h2 { margin: 0; font-size: 14px; }
+.candidates-header .counts { font-size: 12px; color: var(--muted); }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th {
+  text-align: left; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--panel);
+}
+tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; }
+tbody tr:hover { background: #fafaf8; }
+
+.status-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+}
+.status-ready { background: var(--green-bg); color: var(--green); }
+.status-watch { background: var(--amber-bg); color: var(--amber); }
+.status-avoid { background: var(--red-bg); color: var(--red); }
+
+.divergence-bullish { color: var(--green); font-weight: 600; }
+.divergence-bearish { color: var(--red); font-weight: 600; }
+.divergence-none { color: var(--muted); }
+
+.reason-cell { white-space: normal; max-width: 320px; color: var(--muted); font-size: 11px; }
+.empty-state { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
+.scanner-box { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.scanner-counts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.scanner-counts span {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border);
+}
+.error-banner { background: var(--red-bg); color: var(--red); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; }
+.table-scroll { overflow-x: auto; }
