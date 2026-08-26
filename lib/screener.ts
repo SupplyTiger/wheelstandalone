@@ -44,6 +44,7 @@ export type CspCandidateRow = {
   divergenceNote: string | null;
   daysToEarnings: number | null;
   delta: number | null;
+  iv: number | null;
   blockReasons: string[];
   skipReason: string | null;
 };
@@ -98,6 +99,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     divergenceNote: null,
     daysToEarnings: null,
     delta: null,
+    iv: null,
     blockReasons: [],
     skipReason: null,
   };
@@ -232,6 +234,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     roiPct: Number(best.roiPct.toFixed(2)),
     annRoiPct: annRoiPct !== null ? Number(annRoiPct.toFixed(1)) : null,
     delta: best.delta !== null ? Number(best.delta.toFixed(3)) : null,
+    iv: best.contract.impliedVolatility !== null ? Number((best.contract.impliedVolatility * 100).toFixed(1)) : null,
     blockReasons: earningsBlocked ? [...blockReasons] : blockReasons,
     skipReason: null,
   };
@@ -258,6 +261,7 @@ export async function runScreener(params: ScreenerParams) {
     divergenceNote: null,
     daysToEarnings: null,
     delta: null,
+    iv: null,
     blockReasons: [],
     skipReason: error instanceof Error ? error.message : "Unexpected screener error",
   }))));

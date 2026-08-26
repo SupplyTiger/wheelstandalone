@@ -86,35 +86,42 @@ export const UNCLUSTERED = FULL_UNIVERSE.filter(
 
 // Industry sectors — a second, complete classification (one bucket per ticker, not
 // overlapping) covering all 194 names, unlike SECTOR_CLUSTERS above which follows the v7
-// doc's investment-thesis groupings and only tags about half the universe. This is the
-// literal "sort the whole list into industry buckets" categorization. Built by hand from
+// doc's investment-thesis groupings and only tags about half the universe. Collapsed down
+// to GICS-style top-level sectors (what a Bloomberg sector screen would show) instead of
+// 21 narrow sub-industry buckets - a few close calls (megacap tech split by business model
+// rather than pure GICS, crypto and macro ETFs kept as their own buckets since those trade
+// as distinct groups, not because GICS says so) are noted inline. Built by hand from
 // general knowledge of each company's business, not pulled from a data provider - a few of
 // the less-familiar names (CERT, HCAT, RDW, QS, FANUY, COHR) are reasonable best guesses,
 // worth a sanity check rather than treated as authoritative.
 const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
   {
-    name: "Semiconductors & Equipment",
-    tickers: ["AMAT", "AMBA", "AMD", "ADI", "ARM", "ASML", "AVGO", "CEVA", "COHR", "FORM", "INTC", "KLAC", "LRCX", "MCHP", "MPWR", "MRVL", "NVDA", "NXPI", "ON", "QCOM", "TER", "TSM", "TXN"],
+    name: "Technology",
+    tickers: [
+      // Semis & equipment
+      "AMAT", "AMBA", "AMD", "ADI", "ARM", "ASML", "AVGO", "CEVA", "COHR", "FORM", "INTC",
+      "KLAC", "LRCX", "MCHP", "MPWR", "MRVL", "NVDA", "NXPI", "ON", "QCOM", "TER", "TSM", "TXN",
+      // Software & cloud
+      "ADBE", "ADSK", "AI", "ANSS", "APP", "BBAI", "CDNS", "CFLT", "CRM", "DDOG", "ESTC",
+      "HCAT", "HUBS", "IBM", "INTU", "MDB", "NOW", "PATH", "PLTR", "SNOW", "SNPS", "SOUN", "TEAM",
+      // Cybersecurity
+      "CRWD", "FTNT", "NET", "OKTA", "PANW", "S", "ZS",
+      // Data center & networking hardware
+      "ANET", "CIEN", "CRWV", "DELL", "PSTG", "SMCI", "STX", "WDC",
+      // Quantum
+      "IONQ", "RGTI",
+      // Megacap platform/enterprise tech (AMZN goes to Consumer Discretionary instead -
+      // its core business is retail, not a platform/OS/chip business like these three)
+      "AAPL", "MSFT", "ORCL",
+    ],
   },
+  { name: "Communication Services", tickers: ["BABA", "BIDU", "DIS", "GOOGL", "META", "NFLX", "T", "TCEHY", "TWLO", "VZ"] },
   {
-    name: "Software & Cloud Platforms",
-    tickers: ["ADBE", "ADSK", "AI", "ANSS", "APP", "BBAI", "CDNS", "CFLT", "CRM", "DDOG", "ESTC", "HCAT", "HUBS", "IBM", "INTU", "MDB", "NOW", "PATH", "PLTR", "SNOW", "SNPS", "SOUN", "TEAM"],
+    name: "Consumer Discretionary",
+    tickers: ["ABNB", "BKNG", "CCL", "CHWY", "DASH", "LYFT", "RCL", "SHOP", "UBER", "F", "GM", "QS", "TSLA", "NKE", "ULTA", "TGT", "SBUX", "AMZN"],
   },
-  { name: "Cybersecurity", tickers: ["CRWD", "FTNT", "NET", "OKTA", "PANW", "S", "ZS"] },
-  { name: "Data Center & Networking Hardware", tickers: ["ANET", "CIEN", "CRWV", "DELL", "PSTG", "SMCI", "STX", "WDC"] },
-  { name: "Internet, Media & Telecom", tickers: ["BABA", "BIDU", "DIS", "GOOGL", "META", "NFLX", "T", "TCEHY", "TWLO", "VZ"] },
-  { name: "Megacap Diversified Tech", tickers: ["AAPL", "AMZN", "MSFT", "ORCL"] },
-  { name: "Fintech & Payments", tickers: ["AFRM", "HOOD", "NU", "PYPL", "SOFI", "SQ"] },
-  { name: "E-Commerce, Travel & Rideshare", tickers: ["ABNB", "BKNG", "CCL", "CHWY", "DASH", "LYFT", "RCL", "SHOP", "UBER"] },
-  { name: "Consumer Retail & Staples", tickers: ["COST", "KO", "NKE", "PEP", "SBUX", "TGT", "ULTA", "WMT"] },
-  { name: "Autos & EV", tickers: ["F", "GM", "QS", "TSLA"] },
-  { name: "Industrials, Automation & Machinery", tickers: ["ABB", "CGNX", "DE", "EMR", "ETN", "FANUY", "GE", "GEV", "HON", "HUBB", "JCI", "PWR", "ROK", "SYM", "VRT", "ZBRA"] },
-  { name: "Aerospace, Defense & Space", tickers: ["ACHR", "ASTS", "AVAV", "BA", "JOBY", "LUNR", "RDW", "RKLB"] },
-  { name: "Energy & Power Generation", tickers: ["CEG", "CVX", "ENPH", "OKLO", "PLUG", "RUN", "VST", "XOM"] },
-  { name: "Materials & Agriculture", tickers: ["CF", "MOS"] },
-  { name: "Real Estate / Data Center REITs", tickers: ["DLR", "EQIX"] },
-  { name: "Crypto & Digital Assets", tickers: ["CIFR", "CLSK", "COIN", "IREN", "MARA", "MSTR", "RIOT", "WULF"] },
-  { name: "Quantum Computing", tickers: ["IONQ", "RGTI"] },
+  { name: "Consumer Staples", tickers: ["COST", "KO", "PEP", "WMT"] },
+  { name: "Financials", tickers: ["AFRM", "HOOD", "NU", "PYPL", "SOFI", "SQ"] },
   {
     name: "Healthcare & Life Sciences",
     tickers: [
@@ -123,9 +130,22 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
       "MRK", "MRNA", "NTRA", "PFE", "RXRX", "SDGR", "TEM", "UNH", "VEEV", "VKTX", "VRTX", "VTRS", "XBI", "XLV", "ZTS",
     ],
   },
+  {
+    name: "Industrials & Materials",
+    tickers: [
+      "ABB", "CGNX", "DE", "EMR", "ETN", "FANUY", "GE", "GEV", "HON", "HUBB", "JCI", "PWR",
+      "ROK", "SYM", "VRT", "ZBRA", // automation & machinery
+      "ACHR", "ASTS", "AVAV", "BA", "JOBY", "LUNR", "RDW", "RKLB", // aerospace, defense & space
+      "AAL", "DAL", // airlines
+      "BAH", // consulting
+      "CF", "MOS", // materials & ag
+      "DLR", "EQIX", // data-center REITs - grouped here with infrastructure rather than a
+      // standalone 2-name Real Estate bucket
+    ],
+  },
+  { name: "Energy & Utilities", tickers: ["CEG", "CVX", "ENPH", "OKLO", "PLUG", "RUN", "VST", "XOM"] },
+  { name: "Crypto & Digital Assets", tickers: ["CIFR", "CLSK", "COIN", "IREN", "MARA", "MSTR", "RIOT", "WULF"] },
   { name: "Diversified / Macro ETFs", tickers: ["IWM", "QQQ", "SPY", "TLT"] },
-  { name: "Airlines & Travel Transport", tickers: ["AAL", "DAL"] },
-  { name: "Consulting & Business Services", tickers: ["BAH"] },
 ];
 
 export const INDUSTRY_SECTORS = RAW_INDUSTRY_SECTORS.map((c) => ({

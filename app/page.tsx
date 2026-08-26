@@ -23,6 +23,7 @@ type CspCandidateRow = {
   divergenceNote: string | null;
   daysToEarnings: number | null;
   delta: number | null;
+  iv: number | null;
   blockReasons: string[];
   skipReason: string | null;
 };
@@ -87,6 +88,9 @@ function fmtPct(v: number | null) {
 }
 function fmtDelta(v: number | null) {
   return v === null ? "-" : Math.abs(v).toFixed(2);
+}
+function fmtIv(v: number | null) {
+  return v === null ? "-" : `${v.toFixed(0)}%`;
 }
 
 export default function Home() {
@@ -171,7 +175,7 @@ export default function Home() {
             allResults.push({
               ticker: t, status: "avoid", verdict: null, score: null, price: null, strike: null,
               expiry: null, dte: null, bid: null, roiPct: null, annRoiPct: null, maxPain: null,
-              rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null, delta: null,
+              rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null, delta: null, iv: null,
               blockReasons: [], skipReason: json.error ?? "Batch request failed",
             });
           }
@@ -240,7 +244,7 @@ export default function Home() {
             />
             <span>days</span>
           </div>
-          <div className="hint">All data (chain, price, bars, earnings) comes from yahoo-finance2 — no API key needed. A missing earnings date never blocks a candidate, it just isn&apos;t cross-checked. Delta is computed (Black-Scholes, from IV) and capped at 0.30 — candidates struck too close to the money are blocked, not just deprioritized.</div>
+          <div className="hint">All data (chain, price, bars, earnings) comes from yahoo-finance2 — no API key needed. A missing earnings date never blocks a candidate, it just isn&apos;t cross-checked. Delta is computed (Black-Scholes, from IV) and capped at 0.30 — candidates struck too close to the money are blocked, not just deprioritized. IV is the contract&apos;s implied volatility straight from the chain, shown as an annualized percentage.</div>
 
           <button className="run" onClick={runScreener} disabled={anyScanRunning}>
             {loading ? "Scanning..." : "Run Screener"}
@@ -348,6 +352,7 @@ export default function Home() {
                     <th>Max Pain</th>
                     <th>RSI</th>
                     <th>Delta</th>
+                    <th>IV</th>
                     <th>Divergence</th>
                     <th>Reason</th>
                   </tr>
@@ -355,7 +360,7 @@ export default function Home() {
                 <tbody>
                   {results.length === 0 && (
                     <tr>
-                      <td colSpan={15} className="empty-state">
+                      <td colSpan={16} className="empty-state">
                         {data ? "No candidates returned." : "Run the screener to populate candidates."}
                       </td>
                     </tr>
@@ -379,6 +384,7 @@ export default function Home() {
                         <td>{fmtMoney(row.maxPain)}</td>
                         <td>{row.rsi !== null ? row.rsi.toFixed(0) : "-"}</td>
                         <td>{fmtDelta(row.delta)}</td>
+                        <td>{fmtIv(row.iv)}</td>
                         <td className={`divergence-${row.divergence}`}>
                           {row.divergence === "none" ? "-" : row.divergence.toUpperCase()}
                         </td>
