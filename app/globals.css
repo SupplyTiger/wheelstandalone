@@ -1,15 +1,18 @@
 :root {
-  --bg: #f7f7f5;
+  /* Palette matches the original dashboard's design (the earthy green fintech look) so the
+     rebuilt Screener tab and the tab shell around it read as one app, not two bolted together. */
+  --bg: #f7f8f3;
   --panel: #ffffff;
-  --border: #e5e5e2;
-  --ink: #1a1a18;
-  --muted: #767671;
-  --green: #1a7a4c;
-  --green-bg: #e8f5ee;
-  --red: #b3261e;
+  --border: #dfe4dc;
+  --ink: #111811;
+  --muted: #667163;
+  --green: #0f7b55;
+  --green-bg: #e8f6ee;
+  --red: #791f1f;
   --red-bg: #fbeceb;
-  --amber: #8a6100;
+  --amber: #8a5207;
   --amber-bg: #fbf1dc;
+  --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.05);
 }
 
 * { box-sizing: border-box; }
@@ -18,7 +21,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-size: 13px;
 }
 
@@ -29,10 +32,48 @@ body {
 .header h1 { font-size: 20px; margin: 2px 0 0; }
 .header .meta { font-size: 12px; color: var(--muted); }
 
+/* --- Tab shell (app/page.tsx) -------------------------------------------------------- */
+.dash-shell { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+.dash-header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.dash-header .eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--green); font-weight: 700; }
+.dash-header h1 { font-size: 20px; margin: 2px 0 0; color: var(--ink); }
+
+.tab-nav {
+  display: flex; gap: 2px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px; box-shadow: var(--shadow-soft);
+}
+button.tab-nav-btn {
+  display: inline-flex; align-items: center; gap: 6px; border: none; background: none; cursor: pointer;
+  padding: 8px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+  white-space: nowrap;
+}
+button.tab-nav-btn.active { background: var(--ink); color: #fff; }
+button.tab-nav-btn:hover:not(.active) { background: var(--green-bg); color: var(--ink); }
+
+.tab-meta-bar { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+.tab-meta-bar .tab-meta-title { font-size: 16px; margin: 0; }
+.tab-meta-bar .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+.placeholder-panel { text-align: center; padding: 48px 24px; }
+.placeholder-panel h2 { justify-content: center; font-size: 16px; margin-bottom: 8px; }
+.placeholder-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  border-radius: 999px; background: var(--green-bg); color: var(--green); margin-bottom: 14px;
+}
+.placeholder-body { max-width: 440px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.placeholder-note {
+  max-width: 440px; margin: 14px auto 0; color: var(--muted); font-size: 11px; line-height: 1.5;
+  border-top: 1px solid var(--border); padding-top: 12px;
+}
+
 .layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: var(--shadow-soft); }
 .panel h2 { font-size: 13px; margin: 0 0 12px; display: flex; align-items: center; gap: 6px; }
 
 label.field { display: block; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; margin-top: 10px; }

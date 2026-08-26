@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "The Wheel — CSP Screener",
-  description: "Institutional Treasury Wheel CSP screener",
+  title: "The Wheel — Investing Dashboard",
+  description: "Institutional Treasury Wheel dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
