@@ -24,6 +24,7 @@ export type ChecklistInput = {
   newCapital?: number;
   accountValue?: number;
   currentTickerValue?: number;
+  delta?: number | null;
 };
 
 export function currency(value: number | null | undefined) {
@@ -137,6 +138,24 @@ export function checkMaxCollateralGate(input: ChecklistInput): GateResult | null
   return { passed: true, gateName: "Max-Collateral Cap" };
 }
 
+// 0.30 Delta entry filter (project mandate, "the 0.30 Delta/RSI < 35 entry filter,
+// enforced without exception"). A CSP struck too close to the money has too high an
+// assignment probability for the wheel's intended pullback-entry profile - this caps it.
+// Missing delta (IV unavailable from Yahoo) doesn't block, it just isn't cross-checked -
+// same policy already used for the earnings gate when a date can't be found.
+export function checkDeltaGate(delta: number | null | undefined): GateResult {
+  if (delta === null || delta === undefined) return { passed: true, gateName: "0.30 Delta Filter" };
+  const magnitude = Math.abs(delta);
+  if (magnitude > 0.3 + 1e-9) {
+    return {
+      passed: false,
+      gateName: "0.30 Delta Filter",
+      reason: `Delta ${magnitude.toFixed(2)} exceeds the 0.30 entry filter (too close to the money)`,
+    };
+  }
+  return { passed: true, gateName: "0.30 Delta Filter" };
+}
+
 export function runPreTradeChecklist(input: ChecklistInput): GateResult[] {
   const results: GateResult[] = [];
   const concentration = checkConcentrationGate(input);
@@ -146,6 +165,9 @@ export function runPreTradeChecklist(input: ChecklistInput): GateResult[] {
   results.push(checkMaxPainGate(input.strike, input.kind, input.maxPain));
   results.push(checkRule6Gate(input.kind, input.marketDirection));
   results.push(checkEarningsGate(input.daysToEarnings));
+  if (input.kind === "put") {
+    results.push(checkDeltaGate(input.delta));
+  }
   if (input.kind === "call") {
     results.push(checkCapitalDefenseGate(input.strike, input.costBasis));
     if ((input.shortCallQty ?? 0) < 0) {

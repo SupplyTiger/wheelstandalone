@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { calculateMaxPain } from "../maxPain";
-import { checkMaxPainGate, checkRule6Gate, checkEarningsGate, checkMaxCollateralGate, runPreTradeChecklist, verdictFor } from "../gates";
+import { checkMaxPainGate, checkRule6Gate, checkEarningsGate, checkMaxCollateralGate, checkDeltaGate, runPreTradeChecklist, verdictFor } from "../gates";
 import { computeRsiSeries, analyzeTechnicals } from "../technicals";
 import { scoreCandidate, MIN_BID } from "../screener";
+import { putDelta } from "../blackScholes";
 import type { DailyBar } from "../yahooMarket";
 
 test("calculateMaxPain picks the strike minimizing total option-writer payout", () => {
@@ -142,4 +143,50 @@ test("scoreCandidate: max-pain-distance bonus is capped, can't swamp ROI on its 
 test("MIN_BID junk-quote floor is a sane, non-zero threshold", () => {
   assert.ok(MIN_BID > 0);
   assert.ok(MIN_BID < 1); // shouldn't accidentally filter out real, thin-but-tradeable premium
+});
+
+// Regression coverage for the 2026-08-26 bug: the screener was picking near-ATM strikes
+// (e.g. spot $62.01 / strike $62.00) as "best" because ROI is highest right at the money
+// and nothing constrained moneyness. putDelta() + checkDeltaGate() enforce the mandate's
+// 0.30 delta entry filter so that can't happen again.
+test("putDelta: an at-the-money put has delta magnitude around 0.5", () => {
+  const delta = putDelta(100, 100, 30, 0.3);
+  assert.notEqual(delta, null);
+  assert.ok(delta !== null && delta < 0);
+  assert.ok(delta !== null && Math.abs(delta) > 0.4 && Math.abs(delta) < 0.6, `expected ~0.5, got ${delta}`);
+});
+
+test("putDelta: magnitude shrinks as the put goes further out of the money", () => {
+  const nearMoney = putDelta(100, 95, 30, 0.3);
+  const midOtm = putDelta(100, 90, 30, 0.3);
+  const deepOtm = putDelta(100, 80, 30, 0.3);
+  assert.ok(nearMoney !== null && midOtm !== null && deepOtm !== null);
+  assert.ok(Math.abs(nearMoney!) > Math.abs(midOtm!), "95-strike should have bigger delta than 90-strike");
+  assert.ok(Math.abs(midOtm!) > Math.abs(deepOtm!), "90-strike should have bigger delta than 80-strike");
+});
+
+test("putDelta: returns null on unusable inputs instead of throwing", () => {
+  assert.equal(putDelta(null, 100, 30, 0.3), null);
+  assert.equal(putDelta(100, null, 30, 0.3), null);
+  assert.equal(putDelta(100, 100, 0, 0.3), null);
+  assert.equal(putDelta(100, 100, 30, 0), null);
+  assert.equal(putDelta(100, 100, 30, null), null);
+});
+
+test("checkDeltaGate: blocks above 0.30, passes at/below, passes unknown (missing IV)", () => {
+  assert.equal(checkDeltaGate(null).passed, true);
+  assert.equal(checkDeltaGate(-0.25).passed, true); // sign shouldn't matter, magnitude does
+  assert.equal(checkDeltaGate(0.3).passed, true); // boundary
+  assert.equal(checkDeltaGate(-0.31).passed, false);
+  assert.equal(checkDeltaGate(0.5).passed, false); // the ATM-drift bug case
+});
+
+test("full pre-trade checklist: a near-ATM put (delta ~0.5) is BLOCKED even if every other gate passes", () => {
+  const gates = runPreTradeChecklist({
+    ticker: "ASTS", kind: "put", strike: 62, maxPain: 100, marketDirection: "red",
+    daysToEarnings: 30, newCapital: 6200, accountValue: 200000, currentTickerValue: 0,
+    delta: -0.49, // spot ~$62.01, strike $62 - the exact reported bug case
+  });
+  assert.equal(verdictFor(gates), "BLOCKED");
+  assert.ok(gates.some((g) => g.gateName === "0.30 Delta Filter" && !g.passed));
 });

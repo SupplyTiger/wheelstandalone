@@ -9,6 +9,10 @@ import { runPreTradeChecklist, verdictFor, currency, type MarketDirection } from
 import { fetchOptionsSummary, fetchDailyBars, type NormalizedContract } from "./yahooMarket";
 import { analyzeTechnicals, type DivergenceSignal } from "./technicals";
 import { fetchNextEarningsDate } from "./earnings";
+import { putDelta } from "./blackScholes";
+
+// 0.30 Delta entry filter tolerance (matches checkDeltaGate in gates.ts).
+const MAX_ENTRY_DELTA = 0.3 + 1e-9;
 
 export type ScreenerParams = {
   tickers: string[];
@@ -39,6 +43,7 @@ export type CspCandidateRow = {
   divergence: DivergenceSignal;
   divergenceNote: string | null;
   daysToEarnings: number | null;
+  delta: number | null;
   blockReasons: string[];
   skipReason: string | null;
 };
@@ -92,6 +97,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     divergence: "none",
     divergenceNote: null,
     daysToEarnings: null,
+    delta: null,
     blockReasons: [],
     skipReason: null,
   };
@@ -147,7 +153,15 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     return base;
   }
 
-  let best: { contract: NormalizedContract; dte: number; m: number; roiPct: number; score: number } | null = null;
+  // Two running bests: one restricted to contracts that pass the 0.30 delta entry filter
+  // (preferred - this is what should actually get picked), and one unrestricted (fallback
+  // only so a ticker never silently vanishes; it'll get BLOCKED by the delta gate below
+  // with a visible reason instead). Without this split, the highest-ROI contract tends to
+  // win regardless of moneyness, which drifts the "best" strike toward the money - ROI is
+  // highest right at the strike closest to spot, exactly where assignment risk is highest.
+  type Candidate = { contract: NormalizedContract; dte: number; m: number; roiPct: number; score: number; delta: number | null };
+  let bestCompliant: Candidate | null = null;
+  let bestAny: Candidate | null = null;
   let sawQuotedContract = false;
   for (const { contract, dte } of withDte) {
     if (contract.bid !== null && contract.bid > 0) sawQuotedContract = true;
@@ -158,9 +172,14 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     const capital = contract.strike * 100;
     const credit = m * 100;
     const roiPct = (credit / capital) * 100;
+    const delta = putDelta(chain.underlyingPrice, contract.strike, dte, contract.impliedVolatility);
     const score = scoreCandidate(roiPct, dte, chain.maxPain, contract.strike, technicals.rsi, technicals.divergence);
-    if (!best || score > best.score) best = { contract, dte, m, roiPct, score };
+    const candidate = { contract, dte, m, roiPct, score, delta };
+    if (!bestAny || score > bestAny.score) bestAny = candidate;
+    const deltaOk = delta === null || Math.abs(delta) <= MAX_ENTRY_DELTA;
+    if (deltaOk && (!bestCompliant || score > bestCompliant.score)) bestCompliant = candidate;
   }
+  const best = bestCompliant ?? bestAny;
 
   if (!best) {
     base.skipReason = sawQuotedContract
@@ -185,6 +204,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
         newCapital: capital,
         accountValue: params.accountValue,
         currentTickerValue: 0,
+        delta: best.delta,
       })
     : [{ passed: false, gateName: "Max Pain", reason: "Max pain unavailable (insufficient open interest data)" }];
 
@@ -211,6 +231,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     credit,
     roiPct: Number(best.roiPct.toFixed(2)),
     annRoiPct: annRoiPct !== null ? Number(annRoiPct.toFixed(1)) : null,
+    delta: best.delta !== null ? Number(best.delta.toFixed(3)) : null,
     blockReasons: earningsBlocked ? [...blockReasons] : blockReasons,
     skipReason: null,
   };
@@ -236,6 +257,7 @@ export async function runScreener(params: ScreenerParams) {
     divergence: "none" as DivergenceSignal,
     divergenceNote: null,
     daysToEarnings: null,
+    delta: null,
     blockReasons: [],
     skipReason: error instanceof Error ? error.message : "Unexpected screener error",
   }))));

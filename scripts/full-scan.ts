@@ -59,7 +59,7 @@ async function main() {
           ticker: t, status: "avoid", verdict: null, score: null, price: null, strike: null,
           expiry: null, dte: null, bid: null, credit: null, roiPct: null, annRoiPct: null,
           maxPain: null, rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null,
-          blockReasons: [], skipReason: err instanceof Error ? err.message : "Batch failed",
+          delta: null, blockReasons: [], skipReason: err instanceof Error ? err.message : "Batch failed",
         });
       }
       errors += batch.length;
@@ -83,7 +83,7 @@ async function main() {
   if (ready.length) {
     console.log(`\n--- READY (approved + meets min ROI) ---`);
     for (const r of ready) {
-      console.log(`${r.ticker.padEnd(6)} strike=${r.strike} exp=${r.expiry} dte=${r.dte} bid=${r.bid} roi=${r.roiPct}% ann=${r.annRoiPct}% maxPain=${r.maxPain} rsi=${r.rsi} div=${r.divergence} score=${r.score}`);
+      console.log(`${r.ticker.padEnd(6)} strike=${r.strike} exp=${r.expiry} dte=${r.dte} bid=${r.bid} roi=${r.roiPct}% ann=${r.annRoiPct}% maxPain=${r.maxPain} rsi=${r.rsi} delta=${r.delta ?? "-"} div=${r.divergence} score=${r.score}`);
     }
   } else {
     console.log(`\n--- READY: none this scan ---`);
@@ -92,7 +92,7 @@ async function main() {
   if (watch.length) {
     console.log(`\n--- WATCH (approved, below min ROI threshold) ---`);
     for (const r of watch) {
-      console.log(`${r.ticker.padEnd(6)} strike=${r.strike} exp=${r.expiry} dte=${r.dte} bid=${r.bid} roi=${r.roiPct}% ann=${r.annRoiPct}% maxPain=${r.maxPain} rsi=${r.rsi} div=${r.divergence} score=${r.score}`);
+      console.log(`${r.ticker.padEnd(6)} strike=${r.strike} exp=${r.expiry} dte=${r.dte} bid=${r.bid} roi=${r.roiPct}% ann=${r.annRoiPct}% maxPain=${r.maxPain} rsi=${r.rsi} delta=${r.delta ?? "-"} div=${r.divergence} score=${r.score}`);
     }
   }
 

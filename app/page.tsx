@@ -22,6 +22,7 @@ type CspCandidateRow = {
   divergence: "bullish" | "bearish" | "none";
   divergenceNote: string | null;
   daysToEarnings: number | null;
+  delta: number | null;
   blockReasons: string[];
   skipReason: string | null;
 };
@@ -71,6 +72,9 @@ function fmtMoney(v: number | null) {
 }
 function fmtPct(v: number | null) {
   return v === null ? "-" : `${v.toFixed(1)}%`;
+}
+function fmtDelta(v: number | null) {
+  return v === null ? "-" : Math.abs(v).toFixed(2);
 }
 
 export default function Home() {
@@ -151,7 +155,7 @@ export default function Home() {
             allResults.push({
               ticker: t, status: "avoid", verdict: null, score: null, price: null, strike: null,
               expiry: null, dte: null, bid: null, roiPct: null, annRoiPct: null, maxPain: null,
-              rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null,
+              rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null, delta: null,
               blockReasons: [], skipReason: json.error ?? "Batch request failed",
             });
           }
@@ -217,7 +221,7 @@ export default function Home() {
             />
             <span>days</span>
           </div>
-          <div className="hint">All data (chain, price, bars, earnings) comes from yahoo-finance2 — no API key needed. A missing earnings date never blocks a candidate, it just isn&apos;t cross-checked.</div>
+          <div className="hint">All data (chain, price, bars, earnings) comes from yahoo-finance2 — no API key needed. A missing earnings date never blocks a candidate, it just isn&apos;t cross-checked. Delta is computed (Black-Scholes, from IV) and capped at 0.30 — candidates struck too close to the money are blocked, not just deprioritized.</div>
 
           <button className="run" onClick={runScreener} disabled={anyScanRunning}>
             {loading ? "Scanning..." : "Run Screener"}
@@ -286,6 +290,7 @@ export default function Home() {
                     <th>Ann ROI</th>
                     <th>Max Pain</th>
                     <th>RSI</th>
+                    <th>Delta</th>
                     <th>Divergence</th>
                     <th>Reason</th>
                   </tr>
@@ -293,7 +298,7 @@ export default function Home() {
                 <tbody>
                   {results.length === 0 && (
                     <tr>
-                      <td colSpan={14} className="empty-state">
+                      <td colSpan={15} className="empty-state">
                         {data ? "No candidates returned." : "Run the screener to populate candidates."}
                       </td>
                     </tr>
@@ -316,6 +321,7 @@ export default function Home() {
                         <td>{fmtPct(row.annRoiPct)}</td>
                         <td>{fmtMoney(row.maxPain)}</td>
                         <td>{row.rsi !== null ? row.rsi.toFixed(0) : "-"}</td>
+                        <td>{fmtDelta(row.delta)}</td>
                         <td className={`divergence-${row.divergence}`}>
                           {row.divergence === "none" ? "-" : row.divergence.toUpperCase()}
                         </td>
