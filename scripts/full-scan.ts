@@ -9,26 +9,8 @@
 // covered calls, not candidates for new CSPs). Leveraged/inverse single-stock ETFs
 // (NVDL, TSLL, etc.) are banned instruments and were never in the universe list.
 import { runScreener, type CspCandidateRow } from "../lib/screener";
+import { FULL_UNIVERSE, DO_NOT_ADD as EXCLUDED } from "../lib/watchlist";
 import { writeFileSync } from "node:fs";
-
-const FULL_UNIVERSE = [
-  "AAL","AAPL","ABB","ABBV","ABNB","ABT","ACHR","ADBE","ADI","ADSK","AFRM","AI","AMAT","AMBA",
-  "AMD","AMGN","AMZN","ANET","ANSS","APP","ARM","ASML","ASTS","AVAV","AVGO","BA","BABA","BAH",
-  "BBAI","BIDU","BIIB","BKNG","BMY","BSX","CCL","CDNS","CEG","CERT","CEVA","CF","CFLT","CGNX",
-  "CHWY","CIEN","CIFR","CLSK","CNC","COHR","COIN","COST","CRM","CRWD","CRWV","CVS","CVX","DAL",
-  "DASH","DDOG","DE","DELL","DIS","DLR","DXCM","ELV","EMR","ENPH","EQIX","ESTC","ETN","EW","EXEL",
-  "F","FANUY","FORM","FTNT","GE","GEV","GILD","GM","GOOGL","HCA","HCAT","HIMS","HON","HOOD","HUBB",
-  "HUBS","HUM","IBB","IBM","ILMN","INTC","INTU","IONQ","IQV","IREN","ISRG","IWM","JCI","JNJ","JOBY",
-  "KLAC","KO","LLY","LRCX","LUNR","LYFT","MARA","MCHP","MDB","MDT","META","MOS","MPWR","MRK","MRNA",
-  "MRVL","MSFT","MSTR","NET","NFLX","NKE","NOW","NTRA","NU","NVDA","NXPI","OKLO","OKTA","ON","ORCL",
-  "PANW","PATH","PEP","PFE","PLTR","PLUG","PSTG","PWR","PYPL","QCOM","QQQ","QS","RCL","RDW","RGTI",
-  "RIOT","RKLB","ROK","RUN","RXRX","S","SBUX","SDGR","SHOP","SMCI","SNOW","SNPS","SOFI","SOUN","SPY",
-  "SQ","STX","SYM","T","TEAM","TEM","TER","TGT","TLT","TSLA","TSM","TWLO","TXN","UBER","ULTA","UNH",
-  "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLV","XOM","ZBRA","ZS","ZTS",
-  "TCEHY",
-];
-
-const EXCLUDED = ["MU", "SLV"]; // DO-NOT-ADD, concentration violations already held
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];

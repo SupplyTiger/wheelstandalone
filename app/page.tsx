@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CORE_WATCHLIST } from "../lib/watchlist";
 
 type CandidateStatus = "ready" | "watch" | "avoid";
 
@@ -31,7 +32,10 @@ type ScanResponse = {
   summary: { scanned: number; ready: number; watch: number; avoid: number; errors: number };
 };
 
-const DEFAULT_WATCHLIST = "AAPL, AMD, MSFT, NVDA, PLTR, SLV";
+// Your Tier 1-3 core watchlist (v7 doc), DO-NOT-ADD names already excluded. The full
+// ~194-name universe is scanned separately via scripts/full-scan.ts — that one's batched
+// and throttled so it doesn't time out a serverless request or trip Yahoo's rate limit.
+const DEFAULT_WATCHLIST = CORE_WATCHLIST.join(", ");
 
 function fmtMoney(v: number | null) {
   return v === null ? "-" : `$${v.toFixed(2)}`;
