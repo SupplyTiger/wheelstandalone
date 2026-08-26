@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CORE_WATCHLIST, FULL_UNIVERSE, SECTOR_CLUSTERS, UNCLUSTERED, INDUSTRY_SECTORS } from "../lib/watchlist";
 
 type CandidateStatus = "ready" | "watch" | "avoid";
@@ -76,6 +76,56 @@ function sortResults(rows: CspCandidateRow[]): CspCandidateRow[] {
   });
 }
 
+// --- Column sorting -----------------------------------------------------
+// Every data column is click-to-sort (the Reason column is left out - it's
+// free text, not a value with a meaningful order). Standard table-sort UX:
+// first click on a column sorts by that column using its own sensible
+// default direction (e.g. Score defaults to highest-first, RSI defaults to
+// lowest-first since oversold is what a wheel trader is hunting for);
+// clicking the same column again flips direction; nulls always sort to the
+// bottom no matter the direction, so missing data never masquerades as a
+// "highest" or "lowest" value. With no column selected yet, the table falls
+// back to the smart default (status group, then score) via sortResults above.
+type SortDirection = "asc" | "desc";
+type SortableKey =
+  | "ticker" | "score" | "status" | "price" | "strike" | "expiry" | "dte" | "bid"
+  | "roiPct" | "annRoiPct" | "maxPain" | "rsi" | "delta" | "iv" | "divergence";
+type SortState = { key: SortableKey; direction: SortDirection };
+
+const STATUS_RANK: Record<CandidateStatus, number> = { ready: 0, watch: 1, avoid: 2 };
+const DIVERGENCE_RANK: Record<CspCandidateRow["divergence"], number> = { bullish: 0, none: 1, bearish: 2 };
+
+const SORT_COLUMNS: Record<SortableKey, { label: string; getValue: (row: CspCandidateRow) => string | number | null; defaultDirection: SortDirection }> = {
+  ticker: { label: "Ticker", getValue: (r) => r.ticker, defaultDirection: "asc" },
+  score: { label: "Score", getValue: (r) => r.score, defaultDirection: "desc" },
+  status: { label: "Status", getValue: (r) => STATUS_RANK[r.status], defaultDirection: "asc" },
+  price: { label: "Price", getValue: (r) => r.price, defaultDirection: "desc" },
+  strike: { label: "Strike", getValue: (r) => r.strike, defaultDirection: "desc" },
+  expiry: { label: "Expiry", getValue: (r) => r.expiry, defaultDirection: "asc" },
+  dte: { label: "DTE", getValue: (r) => r.dte, defaultDirection: "asc" },
+  bid: { label: "Bid", getValue: (r) => r.bid, defaultDirection: "desc" },
+  roiPct: { label: "ROI", getValue: (r) => r.roiPct, defaultDirection: "desc" },
+  annRoiPct: { label: "Ann ROI", getValue: (r) => r.annRoiPct, defaultDirection: "desc" },
+  maxPain: { label: "Max Pain", getValue: (r) => r.maxPain, defaultDirection: "desc" },
+  rsi: { label: "RSI", getValue: (r) => r.rsi, defaultDirection: "asc" },
+  delta: { label: "Delta", getValue: (r) => (r.delta === null ? null : Math.abs(r.delta)), defaultDirection: "asc" },
+  iv: { label: "IV", getValue: (r) => r.iv, defaultDirection: "desc" },
+  divergence: { label: "Divergence", getValue: (r) => DIVERGENCE_RANK[r.divergence], defaultDirection: "asc" },
+};
+
+function compareValues(a: string | number | null, b: string | number | null, direction: SortDirection): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1; // nulls always last, regardless of sort direction
+  if (b === null) return -1;
+  const cmp = typeof a === "string" && typeof b === "string" ? a.localeCompare(b) : (a as number) - (b as number);
+  return direction === "asc" ? cmp : -cmp;
+}
+
+function sortByColumn(rows: CspCandidateRow[], key: SortableKey, direction: SortDirection): CspCandidateRow[] {
+  const getValue = SORT_COLUMNS[key].getValue;
+  return [...rows].sort((a, b) => compareValues(getValue(a), getValue(b), direction));
+}
+
 function emptySummary(): ScanSummary {
   return { scanned: 0, ready: 0, watch: 0, avoid: 0, errors: 0 };
 }
@@ -108,6 +158,7 @@ export default function Home() {
   const [batchLabel, setBatchLabel] = useState<string | null>(null);
   const [batchProgress, setBatchProgress] = useState<{ batch: number; totalBatches: number; scanned: number; total: number } | null>(null);
   const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
+  const [sortState, setSortState] = useState<SortState | null>(null);
 
   const anyScanRunning = loading || batchRunning;
 
@@ -197,6 +248,24 @@ export default function Home() {
   }
 
   const results = data?.results ?? [];
+
+  // Column click sorts by that column; clicking the already-active column flips
+  // direction. Falls back to the status/score default until a column is picked.
+  function handleSortClick(key: SortableKey) {
+    setSortState((prev) =>
+      prev && prev.key === key ? { key, direction: prev.direction === "asc" ? "desc" : "asc" } : { key, direction: SORT_COLUMNS[key].defaultDirection },
+    );
+  }
+
+  function sortIndicator(key: SortableKey) {
+    if (!sortState || sortState.key !== key) return null;
+    return <span className="sort-arrow">{sortState.direction === "asc" ? "▲" : "▼"}</span>;
+  }
+
+  const displayResults = useMemo(
+    () => (sortState ? sortByColumn(results, sortState.key, sortState.direction) : results),
+    [results, sortState],
+  );
 
   return (
     <div className="page">
@@ -331,41 +400,48 @@ export default function Home() {
               {data && (
                 <div className="counts">
                   {data.summary.ready} ready / {data.summary.watch} watch / {data.summary.avoid} avoid
+                  {sortState && (
+                    <>
+                      {" · sorted by "}
+                      {SORT_COLUMNS[sortState.key].label.toLowerCase()} ({sortState.direction === "asc" ? "low to high" : "high to low"})
+                      <button type="button" className="sort-reset" onClick={() => setSortState(null)}>
+                        reset
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
+            <div className="hint" style={{ marginTop: -6, marginBottom: 8 }}>Click any column header to sort by it — click again to flip direction.</div>
 
             <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>Ticker</th>
-                    <th>Score</th>
-                    <th>Status</th>
-                    <th>Price</th>
-                    <th>Strike</th>
-                    <th>Expiry</th>
-                    <th>DTE</th>
-                    <th>Bid</th>
-                    <th>ROI</th>
-                    <th>Ann ROI</th>
-                    <th>Max Pain</th>
-                    <th>RSI</th>
-                    <th>Delta</th>
-                    <th>IV</th>
-                    <th>Divergence</th>
+                    {(Object.keys(SORT_COLUMNS) as SortableKey[]).map((key) => (
+                      <th
+                        key={key}
+                        className="sortable"
+                        aria-sort={sortState?.key === key ? (sortState.direction === "asc" ? "ascending" : "descending") : "none"}
+                      >
+                        <button type="button" className="th-sort-btn" onClick={() => handleSortClick(key)}>
+                          {SORT_COLUMNS[key].label}
+                          {sortIndicator(key)}
+                        </button>
+                      </th>
+                    ))}
                     <th>Reason</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {results.length === 0 && (
+                  {displayResults.length === 0 && (
                     <tr>
                       <td colSpan={16} className="empty-state">
                         {data ? "No candidates returned." : "Run the screener to populate candidates."}
                       </td>
                     </tr>
                   )}
-                  {results.map((row) => {
+                  {displayResults.map((row) => {
                     const reason = row.skipReason ?? row.blockReasons.join("; ") ?? row.divergenceNote ?? "";
                     return (
                       <tr key={row.ticker} onClick={() => setExpanded(expanded === row.ticker ? null : row.ticker)}>
