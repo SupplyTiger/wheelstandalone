@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CORE_WATCHLIST, FULL_UNIVERSE } from "../lib/watchlist";
+import { CORE_WATCHLIST, FULL_UNIVERSE, SECTOR_CLUSTERS, UNCLUSTERED, INDUSTRY_SECTORS } from "../lib/watchlist";
 
 type CandidateStatus = "ready" | "watch" | "avoid";
 
@@ -39,11 +39,23 @@ type ScanResponse = {
 // default in the box below — small enough that "Run Screener" finishes in one request.
 const DEFAULT_WATCHLIST = CORE_WATCHLIST.join(", ");
 
+// Two ways to slice the 194-name universe into clickable groups:
+// - Theme chips: the v7 doc's investment-thesis clusters (AI Infra, Space/Defense, etc.) -
+//   these overlap (a ticker can be in more than one) and only tag about half the universe,
+//   so there's an "Other" catch-all for names with no clean thesis.
+// - Industry chips: a complete, non-overlapping industry classification covering all 194
+//   names - this is the literal "sort into industry buckets" view.
+const THEME_CHIPS = [
+  ...SECTOR_CLUSTERS,
+  ...(UNCLUSTERED.length ? [{ name: "Other", tickers: UNCLUSTERED }] : []),
+];
+const INDUSTRY_CHIPS = INDUSTRY_SECTORS;
+
 // Same 8-per-batch / throttled pattern as scripts/full-scan.ts, just driven from the
-// browser instead of a terminal, so "Scan Full Watchlist" doesn't time out a single
-// serverless request or fire 194 tickers at Yahoo all at once.
-const FULL_SCAN_BATCH_SIZE = 8;
-const FULL_SCAN_BATCH_DELAY_MS = 2500;
+// browser instead of a terminal, so a big scan doesn't time out a single serverless
+// request or fire a wall of tickers at Yahoo all at once.
+const BATCH_SIZE = 8;
+const BATCH_DELAY_MS = 2500;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -88,10 +100,12 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ScanResponse | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [fullScanRunning, setFullScanRunning] = useState(false);
-  const [fullScanProgress, setFullScanProgress] = useState<{ batch: number; totalBatches: number; scanned: number; total: number } | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchLabel, setBatchLabel] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{ batch: number; totalBatches: number; scanned: number; total: number } | null>(null);
+  const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
 
-  const anyScanRunning = loading || fullScanRunning;
+  const anyScanRunning = loading || batchRunning;
 
   function commonParams() {
     return {
@@ -114,6 +128,7 @@ export default function Home() {
         setData(null);
       } else {
         setData(json);
+        setLastScanLabel("Custom watchlist");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error");
@@ -122,22 +137,23 @@ export default function Home() {
     }
   }
 
-  // Scans the full ~194-ticker universe (lib/watchlist.ts) in small batches so nothing
-  // times out and Yahoo never sees more than FULL_SCAN_BATCH_SIZE requests land at once.
-  // Results accumulate into the same table batch-by-batch, so you see candidates filling
-  // in as it goes instead of staring at a blank screen for several minutes.
-  async function runFullUniverseScan() {
-    setFullScanRunning(true);
+  // Scans an arbitrary ticker list (the full universe, or one sector bucket) in small
+  // batches so nothing times out and Yahoo never sees more than BATCH_SIZE requests land
+  // at once. Results accumulate into the same table batch-by-batch, so you see candidates
+  // filling in as it goes instead of staring at a blank screen for several minutes.
+  async function runBatchedScan(tickers: string[], label: string) {
+    setBatchRunning(true);
+    setBatchLabel(label);
     setError(null);
     setData(null);
 
-    const batches = chunk(FULL_UNIVERSE, FULL_SCAN_BATCH_SIZE);
+    const batches = chunk(tickers, BATCH_SIZE);
     let allResults: CspCandidateRow[] = [];
     const summary = emptySummary();
     const params = commonParams();
 
     for (let i = 0; i < batches.length; i++) {
-      setFullScanProgress({ batch: i + 1, totalBatches: batches.length, scanned: i * FULL_SCAN_BATCH_SIZE, total: FULL_UNIVERSE.length });
+      setBatchProgress({ batch: i + 1, totalBatches: batches.length, scanned: i * BATCH_SIZE, total: tickers.length });
       try {
         const qs = new URLSearchParams({ tickers: batches[i].join(","), ...params });
         const res = await fetch(`/api/screener?${qs.toString()}`);
@@ -168,11 +184,12 @@ export default function Home() {
         setError(err instanceof Error ? `Batch ${i + 1}/${batches.length} failed: ${err.message}` : "Network error mid-scan");
         // Keep going - a transient network error on one batch shouldn't abandon the rest.
       }
-      if (i < batches.length - 1) await sleep(FULL_SCAN_BATCH_DELAY_MS);
+      if (i < batches.length - 1) await sleep(BATCH_DELAY_MS);
     }
 
-    setFullScanProgress(null);
-    setFullScanRunning(false);
+    setBatchProgress(null);
+    setBatchRunning(false);
+    setLastScanLabel(label);
   }
 
   const results = data?.results ?? [];
@@ -184,7 +201,9 @@ export default function Home() {
           <div className="eyebrow">The Wheel</div>
           <h1>CSP Screener</h1>
         </div>
-        <div className="meta">{data ? `Last scan: ${new Date(data.scannedAt).toLocaleTimeString()}` : "Not yet run"}</div>
+        <div className="meta">
+          {data ? `Last scan: ${lastScanLabel ?? ""} · ${new Date(data.scannedAt).toLocaleTimeString()}` : "Not yet run"}
+        </div>
       </div>
 
       <div className="layout">
@@ -227,18 +246,56 @@ export default function Home() {
             {loading ? "Scanning..." : "Run Screener"}
           </button>
 
-          <button className="run run-secondary" onClick={runFullUniverseScan} disabled={anyScanRunning} style={{ marginTop: 8 }}>
-            {fullScanRunning ? "Scanning full watchlist..." : `Scan Full Watchlist (${FULL_UNIVERSE.length})`}
+          <button
+            className="run run-secondary"
+            onClick={() => runBatchedScan(FULL_UNIVERSE, `Full Watchlist (${FULL_UNIVERSE.length})`)}
+            disabled={anyScanRunning}
+            style={{ marginTop: 8 }}
+          >
+            {batchRunning && batchLabel?.startsWith("Full Watchlist") ? "Scanning full watchlist..." : `Scan Full Watchlist (${FULL_UNIVERSE.length})`}
           </button>
           <div className="hint">
-            Runs every name in the v7 watchlist doc (MU/SLV excluded, DO-NOT-ADD) in batches of {FULL_SCAN_BATCH_SIZE}, {(FULL_SCAN_BATCH_DELAY_MS / 1000).toFixed(1)}s apart, so it won&apos;t time out or trip a Yahoo rate limit. Takes several minutes — results fill in as each batch finishes. Keep this tab open.
+            Runs every name in the v7 watchlist doc (MU/SLV excluded, DO-NOT-ADD) in batches of {BATCH_SIZE}, {(BATCH_DELAY_MS / 1000).toFixed(1)}s apart, so it won&apos;t time out or trip a Yahoo rate limit. Takes several minutes — results fill in as each batch finishes. Keep this tab open.
           </div>
-          {fullScanProgress && (
+
+          <label className="field">Scan by Industry</label>
+          <div className="sector-chips">
+            {INDUSTRY_CHIPS.map((cluster) => (
+              <button
+                key={cluster.name}
+                type="button"
+                className="chip"
+                disabled={anyScanRunning}
+                onClick={() => runBatchedScan(cluster.tickers, `${cluster.name} (${cluster.tickers.length})`)}
+              >
+                {batchRunning && batchLabel === `${cluster.name} (${cluster.tickers.length})` ? "Scanning..." : `${cluster.name} (${cluster.tickers.length})`}
+              </button>
+            ))}
+          </div>
+          <div className="hint">Every one of the 194 names sorted into one industry bucket, no overlaps. Click a bucket and it scans immediately (same batching as the full scan).</div>
+
+          <label className="field">Scan by Theme</label>
+          <div className="sector-chips">
+            {THEME_CHIPS.map((cluster) => (
+              <button
+                key={cluster.name}
+                type="button"
+                className="chip"
+                disabled={anyScanRunning}
+                onClick={() => runBatchedScan(cluster.tickers, `${cluster.name} (${cluster.tickers.length})`)}
+              >
+                {batchRunning && batchLabel === `${cluster.name} (${cluster.tickers.length})` ? "Scanning..." : `${cluster.name} (${cluster.tickers.length})`}
+              </button>
+            ))}
+          </div>
+          <div className="hint">The v7 doc's investment-thesis groupings (AI Infra, Space/Defense, Crypto, etc.) — these overlap by design, and &quot;Other&quot; catches names with no clean thesis.</div>
+
+          {batchProgress && (
             <div className="scanner-box">
-              <label className="field" style={{ marginTop: 0 }}>Progress</label>
+              <label className="field" style={{ marginTop: 0 }}>Progress ({batchLabel})</label>
               <div className="scanner-counts">
-                <span>Batch {fullScanProgress.batch}/{fullScanProgress.totalBatches}</span>
-                <span>~{Math.min(fullScanProgress.scanned, fullScanProgress.total)}/{fullScanProgress.total} scanned</span>
+                <span>Batch {batchProgress.batch}/{batchProgress.totalBatches}</span>
+                <span>~{Math.min(batchProgress.scanned, batchProgress.total)}/{batchProgress.total} scanned</span>
               </div>
             </div>
           )}
@@ -260,7 +317,7 @@ export default function Home() {
           {error && <div className="error-banner">{error}</div>}
           {!error && data && (
             <div className="scan-status">
-              {fullScanRunning ? "Scanning..." : "Scan complete:"} {data.summary.scanned} tickers checked.
+              {batchRunning ? "Scanning..." : "Scan complete:"} {lastScanLabel} — {data.summary.scanned} tickers checked.
             </div>
           )}
 
