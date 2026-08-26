@@ -51,6 +51,7 @@ button.run {
   border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
 }
 button.run:disabled { opacity: 0.5; cursor: default; }
+button.run-secondary { background: var(--panel); color: var(--ink); border: 1px solid var(--border); }
 
 .scan-status { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
