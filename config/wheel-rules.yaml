@@ -1,0 +1,110 @@
+# Wheel Rules v2.1 — PMCC Theta Sniper + amended gates (adopted 2026-09-23)
+#
+# Single source of truth for gate thresholds. Loaded by lib/rules.ts into a typed
+# WheelRules object; lib/gates.ts, lib/pmcc.ts and lib/monitors.ts read from it.
+# Change numbers here, not in code.
+#
+# OPEN DECISIONS (values below are unchanged from the current code, NOT decided here):
+#   - gate0.singleNameCapPct   (25 vs 30 unresolved; code has always enforced 30)
+#   - gate02.factorCapPct      (no number chosen yet -> null = gate skipped)
+#   - gate15 gamma regime      (advisory-only for calls; needs gamma-flip data input)
+#   - gate9 dead-capital yield threshold (not used by this module)
+
+version: "2.1"
+
+gate0:                     # Concentration (post-trade single-name %)
+  singleNameCapPct: 30
+gate02:                    # Factor / tier concentration cap
+  factorCapPct: null
+maxCollateral:             # Max-Collateral Cap for a single new CSP
+  capPct: 15
+earnings:
+  blackoutDays: 7          # PMCC: applies to the SHORT leg only; LEAPS may hold through earnings
+exDividend:
+  windowDays: 5
+
+instrumentBan:             # No leveraged or inverse ETFs, any multiplier (SPCU lesson)
+  tickers:
+    - TQQQ
+    - SQQQ
+    - QLD
+    - QID
+    - PSQ
+    - UPRO
+    - SPXL
+    - SPXU
+    - SPXS
+    - SSO
+    - SDS
+    - SH
+    - UDOW
+    - SDOW
+    - TNA
+    - TZA
+    - SOXL
+    - SOXS
+    - LABU
+    - LABD
+    - FAS
+    - FAZ
+    - TECL
+    - TECS
+    - FNGU
+    - FNGD
+    - NVDL
+    - NVDX
+    - NVDD
+    - TSLL
+    - TSLQ
+    - TSLZ
+    - MSTU
+    - MSTX
+    - MSTZ
+    - CONL
+    - AMDL
+    - SPCU
+    - UVXY
+    - SVXY
+    - SVIX
+    - UVIX
+    - BOIL
+    - KOLD
+    - AGQ
+    - ZSL
+    - NUGT
+    - DUST
+    - JNUG
+    - JDST
+
+csp:
+  maxEntryDelta: 0.30      # hard block (existing mandate filter, unchanged)
+  deltaAdvisory:           # advisory only, outside this band
+    min: 0.15
+    max: 0.30
+  profitTarget:            # Theta Sniper close target, fraction of credit captured
+    brokerage: 0.50
+    ira: 0.75
+  timeStopDte: 21
+
+pmcc:
+  leaps:
+    entryMinDelta: 0.70    # advisory at entry
+    entryMinDte: 365       # advisory at entry
+    stopWritingDelta: 0.50 # hard block on NEW short if LEAPS delta below this
+    rollOutDte: 150        # monitor
+    reviewDrawdownPct: 0.35 # monitor: LEAPS down >= 35% from cost
+  short:
+    deltaAdvisory:
+      min: 0.25
+      max: 0.35
+    dteAdvisory:
+      min: 30
+      max: 45
+    profitTarget: 0.50     # Theta Sniper buy-back
+    timeStopDte: 21
+  harvest:
+    spreadWidthPct: 0.80   # spread value >= 80% of width
+    minShortExtrinsic: 0.15 # or short extrinsic <= $0.15
+  rolls:
+    max: 2                 # a 3rd roll is blocked (close instead)
+    requireNetCredit: true

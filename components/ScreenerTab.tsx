@@ -27,6 +27,7 @@ type CspCandidateRow = {
   delta: number | null;
   iv: number | null;
   blockReasons: string[];
+  advisories?: string[];
   skipReason: string | null;
 };
 
@@ -460,7 +461,7 @@ export function ScreenerTab() {
                     </tr>
                   )}
                   {displayResults.map((row) => {
-                    const reason = row.skipReason ?? row.blockReasons.join("; ") ?? row.divergenceNote ?? "";
+                    const reason = row.skipReason ?? [...row.blockReasons, ...(row.advisories ?? []).map((a) => `Advisory: ${a}`)].join("; ");
                     return (
                       <tr key={row.ticker} onClick={() => setExpanded(expanded === row.ticker ? null : row.ticker)}>
                         <td><strong>{row.ticker}</strong></td>

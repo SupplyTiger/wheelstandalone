@@ -1,6 +1,11 @@
 // Pre-trade checklist gates for the Institutional Treasury Wheel.
-// Ported from the working "treasury-wheel-mobile" scaffold (lib/gates.ts) — unchanged logic,
-// this file already implements all five mandate rules correctly.
+// Originally ported from the "treasury-wheel-mobile" scaffold. Wheel Rules v2.1 (2026-09-23):
+// thresholds now come from config/wheel-rules.yaml via lib/rules.ts; Capital Defense uses
+// Adjusted Cost Basis; Naked Ban accepts a qualifying long call (PMCC) as cover; Instrument
+// Ban and CSP delta advisory added. Advisory results have passed=true + advisory=true, so
+// they never change the verdict.
+
+import { loadWheelRules, type WheelRules } from "./rules";
 
 export type OptionKind = "put" | "call";
 export type MarketDirection = "red" | "green";
@@ -9,6 +14,8 @@ export type GateResult = {
   passed: boolean;
   gateName: string;
   reason?: string;
+  /** Non-blocking warning. Always passed=true; shown in the UI, never changes the verdict. */
+  advisory?: boolean;
 };
 
 export type ChecklistInput = {
@@ -18,13 +25,34 @@ export type ChecklistInput = {
   maxPain: number;
   marketDirection: MarketDirection;
   daysToEarnings: number | null;
+  /** Raw per-share cost basis (assignment strike). Kept for display; Capital Defense uses ACB. */
   costBasis?: number | null;
+  /** Lot data for Adjusted Cost Basis. When present, Capital Defense checks strike >= ACB. */
+  lot?: ShareLot | null;
+  /** Long calls on the same underlying, for PMCC coverage under the amended Naked Ban. */
+  longCalls?: LongCallLeg[];
+  /** Short call being evaluated (expiry needed for PMCC coverage). */
+  shortCallExpiry?: string | null;
   shortCallQty?: number;
   sharesOwned?: number;
   newCapital?: number;
   accountValue?: number;
   currentTickerValue?: number;
   delta?: number | null;
+};
+
+export type ShareLot = {
+  /** Per-share assignment strike (raw cost basis). */
+  assignmentStrike: number;
+  /** Total dollars of premium collected on this lot so far (CSP + every CC), for 100 shares. */
+  premiumsCollected: number;
+};
+
+export type LongCallLeg = {
+  strike: number;
+  /** ISO date, YYYY-MM-DD. */
+  expiry: string;
+  contracts: number;
 };
 
 export function currency(value: number | null | undefined) {
@@ -66,73 +94,159 @@ export function checkRule6Gate(kind: OptionKind, marketDirection: MarketDirectio
   return { passed: true, gateName: "Rule 6" };
 }
 
-export function checkEarningsGate(daysToEarnings: number | null): GateResult {
+export function checkEarningsGate(daysToEarnings: number | null, rules: WheelRules = loadWheelRules()): GateResult {
   if (daysToEarnings === null || Number.isNaN(daysToEarnings)) {
     return { passed: true, gateName: "Earnings" };
   }
-  if (daysToEarnings <= 7) {
+  const window = rules.earnings.blackoutDays;
+  if (daysToEarnings <= window) {
     return {
       passed: false,
       gateName: "Earnings",
-      reason: `Earnings in ${daysToEarnings} DTE - within 7-day blackout`,
+      reason: `Earnings in ${daysToEarnings} DTE - within ${window}-day blackout`,
     };
   }
   return { passed: true, gateName: "Earnings" };
 }
 
-export function checkCapitalDefenseGate(ccStrike: number, costBasis: number | null | undefined): GateResult {
-  if (costBasis === null || costBasis === undefined || Number.isNaN(costBasis)) {
+/** Adjusted Cost Basis = assignment strike - (all premiums collected on the lot) / 100. */
+export function adjustedCostBasis(lot: ShareLot): number {
+  return Number((lot.assignmentStrike - lot.premiumsCollected / 100).toFixed(4));
+}
+
+/**
+ * Capital Defense (amended v2.1): CC strike floor is the Adjusted Cost Basis.
+ * Accepts either a ShareLot (preferred) or a bare per-share basis (legacy callers, no premium
+ * history - then ACB == raw basis). The reason string always shows raw basis and ACB.
+ */
+export function checkCapitalDefenseGate(ccStrike: number, basis: ShareLot | number | null | undefined): GateResult {
+  if (basis === null || basis === undefined || (typeof basis === "number" && Number.isNaN(basis))) {
     return { passed: true, gateName: "Capital Defense" };
   }
-  if (ccStrike < costBasis) {
+  const lot: ShareLot = typeof basis === "number" ? { assignmentStrike: basis, premiumsCollected: 0 } : basis;
+  const acb = adjustedCostBasis(lot);
+  const detail = `raw basis ${currency(lot.assignmentStrike)}, ACB ${currency(acb)}`;
+  if (ccStrike < acb) {
     return {
       passed: false,
       gateName: "Capital Defense",
-      reason: `CC strike ${currency(ccStrike)} below cost basis ${currency(costBasis)}`,
+      reason: `CC strike ${currency(ccStrike)} below Adjusted Cost Basis (${detail})`,
     };
   }
-  return { passed: true, gateName: "Capital Defense" };
+  return { passed: true, gateName: "Capital Defense", reason: `Strike at/above ACB (${detail})` };
 }
 
-export function checkNakedBanGate(shortCallQty = 0, sharesOwned = 0): GateResult {
-  const requiredShares = Math.abs(shortCallQty) * 100;
-  if (sharesOwned < requiredShares) {
+export type NakedBanResult = GateResult & {
+  coveredBy?: "shares" | "long-call" | "shares+long-call";
+  /** Indices (into longCalls) of LEAPS now locked: no close/sell while the short is open. */
+  lockedLongCallIdx?: number[];
+};
+
+/** A long call covers a short call if same underlying (caller's job), strike <= short strike, expiry later. */
+export function longCallCovers(long: LongCallLeg, shortStrike: number, shortExpiry: string): boolean {
+  return long.strike <= shortStrike && long.expiry > shortExpiry && long.contracts > 0;
+}
+
+/**
+ * Naked Ban (amended v2.1). A short call passes if covered by >= 100 shares per contract, OR
+ * by long calls on the same underlying with strike <= short strike and expiry after the short
+ * expiry, with contract count >= shorts. Shares and qualifying longs may combine. Qualifying
+ * longs used for cover are returned as locked.
+ */
+export function checkNakedBanGate(
+  shortCallQty = 0,
+  sharesOwned = 0,
+  pmcc?: { shortStrike: number; shortExpiry: string; longCalls: LongCallLeg[] },
+): NakedBanResult {
+  const shorts = Math.abs(shortCallQty);
+  const shareCover = Math.floor(Math.max(0, sharesOwned) / 100);
+  if (shareCover >= shorts) return { passed: true, gateName: "Naked Ban", coveredBy: "shares" };
+
+  let needed = shorts - shareCover;
+  const locked: number[] = [];
+  if (pmcc) {
+    pmcc.longCalls
+      .map((leg, idx) => ({ leg, idx }))
+      .filter(({ leg }) => longCallCovers(leg, pmcc.shortStrike, pmcc.shortExpiry))
+      .sort((a, b) => b.leg.expiry.localeCompare(a.leg.expiry)) // lock the longest-dated first
+      .forEach(({ leg, idx }) => {
+        if (needed <= 0) return;
+        locked.push(idx);
+        needed -= leg.contracts;
+      });
+  }
+  if (needed <= 0) {
     return {
-      passed: false,
+      passed: true,
       gateName: "Naked Ban",
-      reason: `Need ${requiredShares} shares to cover ${Math.abs(shortCallQty)} short calls, have ${sharesOwned}`,
+      coveredBy: shareCover > 0 ? "shares+long-call" : "long-call",
+      lockedLongCallIdx: locked,
     };
   }
-  return { passed: true, gateName: "Naked Ban" };
+  const why = pmcc
+    ? `no qualifying long call (needs strike <= ${currency(pmcc.shortStrike)} and expiry after ${pmcc.shortExpiry})`
+    : `have ${sharesOwned} shares`;
+  return {
+    passed: false,
+    gateName: "Naked Ban",
+    reason: `${shorts} short call${shorts === 1 ? "" : "s"} not covered: need ${shorts * 100} shares or qualifying long calls; ${why}`,
+  };
 }
 
-export function checkConcentrationGate(input: ChecklistInput): GateResult | null {
+/** Instrument Ban: no leveraged or inverse ETFs of any multiplier. */
+export function checkInstrumentBanGate(ticker: string, rules: WheelRules = loadWheelRules()): GateResult {
+  const t = ticker.trim().toUpperCase();
+  if (rules.instrumentBan.tickers.includes(t)) {
+    return { passed: false, gateName: "Instrument Ban", reason: `${t} is a leveraged/inverse ETF - banned` };
+  }
+  return { passed: true, gateName: "Instrument Ban" };
+}
+
+/** CSP delta advisory (v2.1): non-blocking note when |delta| is outside the 0.15-0.30 band. */
+export function cspDeltaAdvisory(delta: number | null | undefined, rules: WheelRules = loadWheelRules()): GateResult | null {
+  if (delta === null || delta === undefined) return null;
+  const { min, max } = rules.csp.deltaAdvisory;
+  const m = Math.abs(delta);
+  if (m < min - 1e-9 || m > max + 1e-9) {
+    return {
+      passed: true,
+      advisory: true,
+      gateName: "CSP Delta Band",
+      reason: `Delta ${m.toFixed(2)} outside ${min.toFixed(2)}-${max.toFixed(2)} target band`,
+    };
+  }
+  return null;
+}
+
+export function checkConcentrationGate(input: ChecklistInput, rules: WheelRules = loadWheelRules()): GateResult | null {
   const accountValue = input.accountValue ?? 0;
   if (accountValue <= 0) return null;
   const currentTickerValue = input.currentTickerValue ?? 0;
   const newCapital = input.newCapital ?? 0;
   const newPct = ((currentTickerValue + newCapital) / accountValue) * 100;
-  if (newPct > 30) {
+  const cap = rules.gate0.singleNameCapPct;
+  if (newPct > cap) {
     return {
       passed: false,
       gateName: "Concentration",
-      reason: `${input.ticker.toUpperCase()} would be ${newPct.toFixed(1)}% of portfolio (30% limit)`,
+      reason: `${input.ticker.toUpperCase()} would be ${newPct.toFixed(1)}% of portfolio (${cap}% limit)`,
     };
   }
   return { passed: true, gateName: "Concentration" };
 }
 
 // 15% Max-Collateral Cap — a single new CSP's reserved collateral cannot exceed 15% of account value.
-export function checkMaxCollateralGate(input: ChecklistInput): GateResult | null {
+export function checkMaxCollateralGate(input: ChecklistInput, rules: WheelRules = loadWheelRules()): GateResult | null {
   const accountValue = input.accountValue ?? 0;
   const newCapital = input.newCapital ?? 0;
   if (accountValue <= 0 || newCapital <= 0) return null;
   const pct = (newCapital / accountValue) * 100;
-  if (pct > 15) {
+  const cap = rules.maxCollateral.capPct;
+  if (pct > cap) {
     return {
       passed: false,
       gateName: "Max-Collateral Cap",
-      reason: `${input.ticker.toUpperCase()} CSP would reserve ${pct.toFixed(1)}% of account (15% cap)`,
+      reason: `${input.ticker.toUpperCase()} CSP would reserve ${pct.toFixed(1)}% of account (${cap}% cap)`,
     };
   }
   return { passed: true, gateName: "Max-Collateral Cap" };
@@ -143,40 +257,56 @@ export function checkMaxCollateralGate(input: ChecklistInput): GateResult | null
 // assignment probability for the wheel's intended pullback-entry profile - this caps it.
 // Missing delta (IV unavailable from Yahoo) doesn't block, it just isn't cross-checked -
 // same policy already used for the earnings gate when a date can't be found.
-export function checkDeltaGate(delta: number | null | undefined): GateResult {
+export function checkDeltaGate(delta: number | null | undefined, rules: WheelRules = loadWheelRules()): GateResult {
   if (delta === null || delta === undefined) return { passed: true, gateName: "0.30 Delta Filter" };
   const magnitude = Math.abs(delta);
-  if (magnitude > 0.3 + 1e-9) {
+  const max = rules.csp.maxEntryDelta;
+  if (magnitude > max + 1e-9) {
     return {
       passed: false,
       gateName: "0.30 Delta Filter",
-      reason: `Delta ${magnitude.toFixed(2)} exceeds the 0.30 entry filter (too close to the money)`,
+      reason: `Delta ${magnitude.toFixed(2)} exceeds the ${max.toFixed(2)} entry filter (too close to the money)`,
     };
   }
   return { passed: true, gateName: "0.30 Delta Filter" };
 }
 
-export function runPreTradeChecklist(input: ChecklistInput): GateResult[] {
+export function runPreTradeChecklist(input: ChecklistInput, rules: WheelRules = loadWheelRules()): GateResult[] {
   const results: GateResult[] = [];
-  const concentration = checkConcentrationGate(input);
+  const concentration = checkConcentrationGate(input, rules);
   if (concentration) results.push(concentration);
-  const collateral = checkMaxCollateralGate(input);
+  const collateral = checkMaxCollateralGate(input, rules);
   if (collateral) results.push(collateral);
   results.push(checkMaxPainGate(input.strike, input.kind, input.maxPain));
   results.push(checkRule6Gate(input.kind, input.marketDirection));
-  results.push(checkEarningsGate(input.daysToEarnings));
+  results.push(checkEarningsGate(input.daysToEarnings, rules));
   if (input.kind === "put") {
-    results.push(checkDeltaGate(input.delta));
+    results.push(checkDeltaGate(input.delta, rules));
+    const advisory = cspDeltaAdvisory(input.delta, rules);
+    if (advisory) results.push(advisory);
   }
   if (input.kind === "call") {
-    results.push(checkCapitalDefenseGate(input.strike, input.costBasis));
+    results.push(checkCapitalDefenseGate(input.strike, input.lot ?? input.costBasis));
     if ((input.shortCallQty ?? 0) < 0) {
-      results.push(checkNakedBanGate(input.shortCallQty, input.sharesOwned));
+      results.push(
+        checkNakedBanGate(
+          input.shortCallQty,
+          input.sharesOwned,
+          input.longCalls?.length && input.shortCallExpiry
+            ? { shortStrike: input.strike, shortExpiry: input.shortCallExpiry, longCalls: input.longCalls }
+            : undefined,
+        ),
+      );
     }
   }
+  results.push(checkInstrumentBanGate(input.ticker, rules));
   return results;
 }
 
 export function verdictFor(results: GateResult[]) {
   return results.every((result) => result.passed) ? "APPROVED" : "BLOCKED";
+}
+
+export function advisoriesFrom(results: GateResult[]): string[] {
+  return results.filter((r) => r.advisory && r.reason).map((r) => r.reason as string);
 }
