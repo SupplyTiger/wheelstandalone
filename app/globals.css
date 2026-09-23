@@ -161,3 +161,12 @@ tbody tr:hover { background: #fafaf8; }
 td.day-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 td.day-cell.day-up { background: var(--green-bg); }
 td.day-cell.day-down { background: var(--red-bg); }
+
+/* Portfolio tab */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi-label { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.kpi-value { font-size: 20px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.flag-row { font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.flag-row:last-child { border-bottom: none; }
+@media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

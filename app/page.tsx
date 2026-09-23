@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Activity, BriefcaseBusiness, Search, Target, TrendingUp } from "lucide-react";
 import { ScreenerTab } from "../components/ScreenerTab";
 import { PlaceholderTab } from "../components/PlaceholderTab";
+import { PortfolioTab } from "../components/PortfolioTab";
 
 type TabId = "portfolio" | "action" | "screener" | "positions" | "activity";
 
@@ -20,8 +21,7 @@ const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: "activity", label: "Activity", icon: <Activity size={16} /> },
 ];
 
-const PLACEHOLDER_COPY: Record<Exclude<TabId, "screener">, string> = {
-  portfolio: "Account value, open P&L vs. the $200K floor, and stock/options/cash allocation - pulled live once this tab is rebuilt.",
+const PLACEHOLDER_COPY: Record<Exclude<TabId, "screener" | "portfolio">, string> = {
   action: "The 21 DTE Gamma Guard queue and other flagged positions that need a roll, close, or assignment decision this week.",
   positions: "Every open position synced from Fidelity - shares, short puts/calls, cost basis, and current gain/loss.",
   activity: "Session log of scans run, syncs, and broker connection status.",
@@ -55,6 +55,8 @@ export default function Home() {
       <div className="dash-content">
         {activeTab === "screener" ? (
           <ScreenerTab />
+        ) : activeTab === "portfolio" ? (
+          <PortfolioTab />
         ) : (
           <PlaceholderTab
             title={TABS.find((t) => t.id === activeTab)!.label}
