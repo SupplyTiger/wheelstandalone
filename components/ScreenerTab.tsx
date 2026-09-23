@@ -11,6 +11,8 @@ type CspCandidateRow = {
   verdict: "APPROVED" | "BLOCKED" | null;
   score: number | null;
   price: number | null;
+  dayChange: number | null;
+  dayChangePct: number | null;
   strike: number | null;
   expiry: string | null;
   dte: number | null;
@@ -88,11 +90,24 @@ function sortResults(rows: CspCandidateRow[]): CspCandidateRow[] {
 // back to the smart default (status group, then score) via sortResults above.
 type SortDirection = "asc" | "desc";
 type SortableKey =
-  | "ticker" | "score" | "status" | "price" | "strike" | "expiry" | "dte" | "bid"
+  | "ticker" | "score" | "status" | "price" | "dayChangePct" | "strike" | "expiry" | "dte" | "bid"
   | "roiPct" | "annRoiPct" | "maxPain" | "rsi" | "delta" | "iv" | "divergence";
 type SortState = { key: SortableKey; direction: SortDirection };
 
 const STATUS_RANK: Record<CandidateStatus, number> = { ready: 0, watch: 1, avoid: 2 };
+function dayClass(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined) return "";
+  return pct > 0 ? "day-up" : pct < 0 ? "day-down" : "day-flat";
+}
+
+function fmtDay(chg: number | null | undefined, pct: number | null | undefined): string {
+  if (pct === null || pct === undefined) return "-";
+  const arrow = pct > 0 ? "\u25B2" : pct < 0 ? "\u25BC" : "\u25A0";
+  const pctText = `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
+  const chgText = chg === null || chg === undefined ? "" : ` (${chg > 0 ? "+" : chg < 0 ? "-" : ""}$${Math.abs(chg).toFixed(2)})`;
+  return `${arrow} ${pctText}${chgText}`;
+}
+
 const DIVERGENCE_RANK: Record<CspCandidateRow["divergence"], number> = { bullish: 0, none: 1, bearish: 2 };
 
 const SORT_COLUMNS: Record<SortableKey, { label: string; getValue: (row: CspCandidateRow) => string | number | null; defaultDirection: SortDirection }> = {
@@ -100,6 +115,7 @@ const SORT_COLUMNS: Record<SortableKey, { label: string; getValue: (row: CspCand
   score: { label: "Score", getValue: (r) => r.score, defaultDirection: "desc" },
   status: { label: "Status", getValue: (r) => STATUS_RANK[r.status], defaultDirection: "asc" },
   price: { label: "Price", getValue: (r) => r.price, defaultDirection: "desc" },
+  dayChangePct: { label: "Today", getValue: (r) => r.dayChangePct, defaultDirection: "desc" },
   strike: { label: "Strike", getValue: (r) => r.strike, defaultDirection: "desc" },
   expiry: { label: "Expiry", getValue: (r) => r.expiry, defaultDirection: "asc" },
   dte: { label: "DTE", getValue: (r) => r.dte, defaultDirection: "asc" },
@@ -224,7 +240,7 @@ export function ScreenerTab() {
           // One bad batch shouldn't kill the whole run - record it and keep going.
           for (const t of batches[i]) {
             allResults.push({
-              ticker: t, status: "avoid", verdict: null, score: null, price: null, strike: null,
+              ticker: t, status: "avoid", verdict: null, score: null, price: null, dayChange: null, dayChangePct: null, strike: null,
               expiry: null, dte: null, bid: null, roiPct: null, annRoiPct: null, maxPain: null,
               rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null, delta: null, iv: null,
               blockReasons: [], skipReason: json.error ?? "Batch request failed",
@@ -397,6 +413,11 @@ export function ScreenerTab() {
               {data && (
                 <div className="counts">
                   {data.summary.ready} ready / {data.summary.watch} watch / {data.summary.avoid} avoid
+                  {" · "}
+                  <span className="day-up">{data.results.filter((r) => (r.dayChangePct ?? 0) > 0).length} up</span>
+                  {" / "}
+                  <span className="day-down">{data.results.filter((r) => (r.dayChangePct ?? 0) < 0).length} down</span>
+                  {" today"}
                   {sortState && (
                     <>
                       {" · sorted by "}
@@ -433,7 +454,7 @@ export function ScreenerTab() {
                 <tbody>
                   {displayResults.length === 0 && (
                     <tr>
-                      <td colSpan={16} className="empty-state">
+                      <td colSpan={17} className="empty-state">
                         {data ? "No candidates returned." : "Run the screener to populate candidates."}
                       </td>
                     </tr>
@@ -447,7 +468,8 @@ export function ScreenerTab() {
                         <td>
                           <span className={`status-pill status-${row.status}`}>{row.status.toUpperCase()}</span>
                         </td>
-                        <td>{fmtMoney(row.price)}</td>
+                        <td className={dayClass(row.dayChangePct)}>{fmtMoney(row.price)}</td>
+                        <td className={`day-cell ${dayClass(row.dayChangePct)}`}>{fmtDay(row.dayChange, row.dayChangePct)}</td>
                         <td>{fmtMoney(row.strike)}</td>
                         <td>{row.expiry ?? "-"}</td>
                         <td>{row.dte ?? "-"}</td>

@@ -31,6 +31,8 @@ export type CspCandidateRow = {
   verdict: "APPROVED" | "BLOCKED" | null;
   score: number | null;
   price: number | null;
+  dayChange: number | null;
+  dayChangePct: number | null;
   strike: number | null;
   expiry: string | null;
   dte: number | null;
@@ -86,6 +88,8 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     verdict: null,
     score: null,
     price: null,
+    dayChange: null,
+    dayChangePct: null,
     strike: null,
     expiry: null,
     dte: null,
@@ -119,6 +123,8 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
   }
   const chain = chainResult.value;
   base.price = chain.underlyingPrice;
+  base.dayChange = chain.dayChange;
+  base.dayChangePct = chain.dayChangePct;
   base.maxPain = chain.maxPain;
 
   if (chain.underlyingPrice === null) {
@@ -133,10 +139,15 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     const last = bars[bars.length - 1];
     const prev = bars[bars.length - 2];
     marketDirection = last.close >= prev.close ? "green" : "red";
+    if (base.dayChangePct === null && prev.close) {
+      base.dayChange = last.close - prev.close;
+      base.dayChangePct = ((last.close - prev.close) / prev.close) * 100;
+    }
     technicals = analyzeTechnicals(bars);
   } else {
     base.skipReason = barsResult.status === "rejected" ? `Technicals unavailable: ${(barsResult.reason as Error)?.message ?? "no bars"}` : null;
   }
+  if (base.dayChangePct !== null) marketDirection = base.dayChangePct >= 0 ? "green" : "red";
   base.rsi = technicals.rsi;
   base.divergence = technicals.divergence;
   base.divergenceNote = technicals.divergenceNote;
@@ -248,6 +259,8 @@ export async function runScreener(params: ScreenerParams) {
     verdict: null,
     score: null,
     price: null,
+    dayChange: null,
+    dayChangePct: null,
     strike: null,
     expiry: null,
     dte: null,

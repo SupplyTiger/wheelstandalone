@@ -44,6 +44,9 @@ export type OptionsSummary = {
   contractsList: NormalizedContract[];
   maxPain: number | null;
   underlyingPrice: number | null;
+  // Today's move vs. prior close, straight from Yahoo's quote block (null if not returned).
+  dayChange: number | null;
+  dayChangePct: number | null;
 };
 
 function toNum(v: unknown): number | null {
@@ -69,6 +72,8 @@ export async function fetchOptionsSummary(ticker: string, expirationGte?: string
   // spin this into dozens of requests).
   const first = await withTimeout(yahooFinance.options(symbol), REQUEST_TIMEOUT_MS, `yahoo options(${symbol})`);
   const underlyingPrice = toNum(first.quote?.regularMarketPrice) ?? null;
+  const dayChange = toNum(first.quote?.regularMarketChange) ?? null;
+  const dayChangePct = toNum(first.quote?.regularMarketChangePercent) ?? null;
 
   const allExpirations = (first.expirationDates ?? []).map((d) => toDateString(d)).filter(Boolean);
   const inWindow = allExpirations.filter((exp) => (!expirationGte || exp >= expirationGte) && (!expirationLte || exp <= expirationLte));
@@ -138,6 +143,8 @@ export async function fetchOptionsSummary(ticker: string, expirationGte?: string
     contractsList: rows,
     maxPain: calculateMaxPain(rows),
     underlyingPrice,
+    dayChange,
+    dayChangePct,
   };
 }
 

@@ -56,7 +56,7 @@ async function main() {
       console.log(`BATCH FAILED: ${err instanceof Error ? err.message : err}`);
       for (const t of batch) {
         allResults.push({
-          ticker: t, status: "avoid", verdict: null, score: null, price: null, strike: null,
+          ticker: t, status: "avoid", verdict: null, score: null, price: null, dayChange: null, dayChangePct: null, strike: null,
           expiry: null, dte: null, bid: null, credit: null, roiPct: null, annRoiPct: null,
           maxPain: null, rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null,
           delta: null, iv: null, blockReasons: [], skipReason: err instanceof Error ? err.message : "Batch failed",

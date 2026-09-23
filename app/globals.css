@@ -153,3 +153,11 @@ tbody tr:hover { background: #fafaf8; }
 }
 .error-banner { background: var(--red-bg); color: var(--red); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; }
 .table-scroll { overflow-x: auto; }
+
+/* --- Today's move (Today column + tinted price) ------------------------------------- */
+.day-up { color: var(--green); font-weight: 600; }
+.day-down { color: #b42318; font-weight: 600; }
+.day-flat { color: var(--muted); }
+td.day-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.day-cell.day-up { background: var(--green-bg); }
+td.day-cell.day-down { background: var(--red-bg); }
