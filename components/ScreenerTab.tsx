@@ -430,7 +430,7 @@ export function ScreenerTab() {
                 </div>
               )}
             </div>
-            <div className="hint" style={{ marginTop: -6, marginBottom: 8 }}>Click any column header to sort by it — click again to flip direction.</div>
+            <div className="hint" style={{ marginTop: -6, marginBottom: 8 }}>Click any column header to sort by it — click again to flip direction. Score is 0–100: ROI up to 50 (8%+ = full), max-pain cushion 15, DTE fit 15, RSI 10, divergence 10.</div>
 
             <div className="table-scroll">
               <table>

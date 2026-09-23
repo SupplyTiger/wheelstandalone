@@ -130,6 +130,20 @@ test("scoreCandidate: real ROI beats deep-OTM max-pain distance (regression, was
   );
 });
 
+test("scoreCandidate: always an integer between 0 and 100", () => {
+  const cases: Parameters<typeof scoreCandidate>[] = [
+    [0, 5, null, 10, null, "bearish"],
+    [50, 30, 1000, 1, 10, "bullish"],
+    [9.75, 58, 26, 16, 55, "none"],
+    [-3, 90, 5, 50, 80, "bearish"],
+  ];
+  for (const c of cases) {
+    const s = scoreCandidate(...c);
+    assert.ok(Number.isInteger(s) && s >= 0 && s <= 100, `score ${s} out of range for ${JSON.stringify(c)}`);
+  }
+  assert.equal(scoreCandidate(50, 30, 1000, 1, 10, "bullish"), 100);
+});
+
 test("scoreCandidate: max-pain-distance bonus is capped, can't swamp ROI on its own", () => {
   // Same tiny ROI, but push pain distance to an extreme (strike near zero vs a huge max pain).
   const extremePainDistance = scoreCandidate(0.09, 24, 1000, 1, null, "none");

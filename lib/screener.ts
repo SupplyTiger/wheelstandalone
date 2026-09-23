@@ -70,15 +70,24 @@ function mid(contract: NormalizedContract): number | null {
 // candidate because the uncapped max-pain-distance bonus below swamped its near-zero ROI).
 export const MIN_BID = 0.05;
 
+// Score is always 0-100, built from five capped components so no single input can run away:
+//   ROI (raw, per trade) ........ up to 50  (8%+ ROI earns the full 50)
+//   Max-pain cushion ............ up to 15  (1 point per % the strike sits below max pain)
+//   DTE fit ..................... up to 15  (21-45 DTE = 15, 14-60 DTE = 7, otherwise 0)
+//   RSI ......................... up to 10  (< 35 = 10, < 45 = 5, otherwise 0)
+//   Divergence .................. up to 10  (bullish = 10, none = 5, bearish = 0)
+export const SCORE_WEIGHTS = { roi: 50, roiFullAtPct: 8, painCushion: 15, dte: 15, rsi: 10, divergence: 10 } as const;
+
 export function scoreCandidate(roiPct: number, dte: number, maxPain: number | null, strike: number, rsi: number | null, divergence: DivergenceSignal) {
-  const rawPainDistance = maxPain && maxPain > 0 ? Math.max(0, ((maxPain - strike) / maxPain) * 100) : 0;
-  // Max-pain distance is a safety tilt, not the primary driver — ROI is what the trader
-  // actually collects. Cap it so it can never outweigh a real premium difference.
-  const painDistanceBonus = Math.min(rawPainDistance, 15);
-  const dteFit = dte >= 21 && dte <= 45 ? 18 : dte >= 14 && dte <= 60 ? 8 : -20;
-  const rsiBonus = rsi !== null && rsi < 35 ? 10 : 0;
-  const divergenceBonus = divergence === "bullish" ? 8 : divergence === "bearish" ? -4 : 0;
-  return Number((roiPct * 18 + painDistanceBonus + dteFit + rsiBonus + divergenceBonus).toFixed(2));
+  const w = SCORE_WEIGHTS;
+  const roiPts = Math.min(Math.max(roiPct, 0) / w.roiFullAtPct, 1) * w.roi;
+  const painDistancePct = maxPain && maxPain > 0 ? Math.max(0, ((maxPain - strike) / maxPain) * 100) : 0;
+  const painPts = Math.min(painDistancePct, w.painCushion);
+  const dtePts = dte >= 21 && dte <= 45 ? w.dte : dte >= 14 && dte <= 60 ? 7 : 0;
+  const rsiPts = rsi === null ? 0 : rsi < 35 ? w.rsi : rsi < 45 ? 5 : 0;
+  const divPts = divergence === "bullish" ? w.divergence : divergence === "bearish" ? 0 : 5;
+  const total = roiPts + painPts + dtePts + rsiPts + divPts;
+  return Math.round(Math.min(100, Math.max(0, total)));
 }
 
 async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<CspCandidateRow> {
