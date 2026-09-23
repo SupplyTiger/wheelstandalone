@@ -5,7 +5,7 @@
 // never a generic catch-all that lies about why a ticker was dropped (see the
 // CODEX-BRIEF-csp-screener.md postmortem on the old desktop app for exactly this bug).
 
-import { runPreTradeChecklist, verdictFor, currency, type MarketDirection } from "./gates";
+import { runPreTradeChecklist, verdictFor, advisoriesFrom, currency, type MarketDirection } from "./gates";
 import { fetchOptionsSummary, fetchDailyBars, type NormalizedContract } from "./yahooMarket";
 import { analyzeTechnicals, type DivergenceSignal } from "./technicals";
 import { fetchNextEarningsDate } from "./earnings";
@@ -48,6 +48,8 @@ export type CspCandidateRow = {
   delta: number | null;
   iv: number | null;
   blockReasons: string[];
+  /** Non-blocking notes (e.g. CSP delta outside the 0.15-0.30 band). */
+  advisories?: string[];
   skipReason: string | null;
 };
 
@@ -256,6 +258,7 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     delta: best.delta !== null ? Number(best.delta.toFixed(3)) : null,
     iv: best.contract.impliedVolatility !== null ? Number((best.contract.impliedVolatility * 100).toFixed(1)) : null,
     blockReasons: earningsBlocked ? [...blockReasons] : blockReasons,
+    advisories: advisoriesFrom(gates),
     skipReason: null,
   };
 }
