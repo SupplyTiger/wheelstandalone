@@ -42,11 +42,11 @@ type ScanResponse = {
 // default in the box below — small enough that "Run Screener" finishes in one request.
 const DEFAULT_WATCHLIST = CORE_WATCHLIST.join(", ");
 
-// Two ways to slice the 194-name universe into clickable groups:
+// Two ways to slice the 196-name universe into clickable groups:
 // - Theme chips: the v7 doc's investment-thesis clusters (AI Infra, Space/Defense, etc.) -
 //   these overlap (a ticker can be in more than one) and only tag about half the universe,
 //   so there's an "Other" catch-all for names with no clean thesis.
-// - Industry chips: a complete, non-overlapping industry classification covering all 194
+// - Industry chips: a complete, non-overlapping industry classification covering all 196
 //   names - this is the literal "sort into industry buckets" view.
 const THEME_CHIPS = [
   ...SECTOR_CLUSTERS,
@@ -341,7 +341,7 @@ export function ScreenerTab() {
             {batchRunning && batchLabel?.startsWith("Full Watchlist") ? "Scanning full watchlist..." : `Scan Full Watchlist (${FULL_UNIVERSE.length})`}
           </button>
           <div className="hint">
-            Runs every name in the v7 watchlist doc (MU/SLV excluded, DO-NOT-ADD) in batches of {BATCH_SIZE}, {(BATCH_DELAY_MS / 1000).toFixed(1)}s apart, so it won&apos;t time out or trip a Yahoo rate limit. Takes several minutes — results fill in as each batch finishes. Keep this tab open.
+            Runs every name in the v7 watchlist doc in batches of {BATCH_SIZE}, {(BATCH_DELAY_MS / 1000).toFixed(1)}s apart, so it won&apos;t time out or trip a Yahoo rate limit. Takes several minutes — results fill in as each batch finishes. Keep this tab open.
           </div>
 
           <label className="field">Scan by Industry</label>
@@ -358,7 +358,7 @@ export function ScreenerTab() {
               </button>
             ))}
           </div>
-          <div className="hint">Every one of the 194 names sorted into one industry bucket, no overlaps. Click a bucket and it scans immediately (same batching as the full scan).</div>
+          <div className="hint">Every one of the 196 names sorted into one industry bucket, no overlaps. Click a bucket and it scans immediately (same batching as the full scan).</div>
 
           <label className="field">Scan by Theme</label>
           <div className="sector-chips">

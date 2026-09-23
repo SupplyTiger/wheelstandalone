@@ -3,7 +3,9 @@
 // of truth shared by the UI's default watchlist and scripts/full-scan.ts, so the two
 // never drift apart.
 
-export const DO_NOT_ADD = ["MU", "SLV"]; // existing concentration violations, rotate OUT only
+// Names blocked from scanning. Was ["MU", "SLV"] while those were concentration violations;
+// both positions are closed (Sep 2026), so they are screened like any other name again.
+export const DO_NOT_ADD: string[] = [];
 
 export const FULL_UNIVERSE = [
   "AAL","AAPL","ABB","ABBV","ABNB","ABT","ACHR","ADBE","ADI","ADSK","AFRM","AI","AMAT","AMBA",
@@ -14,9 +16,9 @@ export const FULL_UNIVERSE = [
   "F","FANUY","FORM","FTNT","GE","GEV","GILD","GM","GOOGL","HCA","HCAT","HIMS","HON","HOOD","HUBB",
   "HUBS","HUM","IBB","IBM","ILMN","INTC","INTU","IONQ","IQV","IREN","ISRG","IWM","JCI","JNJ","JOBY",
   "KLAC","KO","LLY","LRCX","LUNR","LYFT","MARA","MCHP","MDB","MDT","META","MOS","MPWR","MRK","MRNA",
-  "MRVL","MSFT","MSTR","NET","NFLX","NKE","NOW","NTRA","NU","NVDA","NXPI","OKLO","OKTA","ON","ORCL",
+  "MRVL","MSFT","MSTR","MU","NET","NFLX","NKE","NOW","NTRA","NU","NVDA","NXPI","OKLO","OKTA","ON","ORCL",
   "PANW","PATH","PEP","PFE","PLTR","PLUG","PSTG","PWR","PYPL","QCOM","QQQ","QS","RCL","RDW","RGTI",
-  "RIOT","RKLB","ROK","RUN","RXRX","S","SBUX","SDGR","SHOP","SMCI","SNOW","SNPS","SOFI","SOUN","SPY",
+  "RIOT","RKLB","ROK","RUN","RXRX","S","SBUX","SDGR","SHOP","SLV","SMCI","SNOW","SNPS","SOFI","SOUN","SPY",
   "SQ","STX","SYM","T","TEAM","TEM","TER","TGT","TLT","TSLA","TSM","TWLO","TXN","UBER","ULTA","UNH",
   "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLV","XOM","ZBRA","ZS","ZTS",
   "TCEHY",
@@ -46,7 +48,7 @@ export const CORE_WATCHLIST = Array.from(
 // none currently land in a named cluster.
 const RAW_CLUSTERS: { name: string; tickers: string[] }[] = [
   { name: "AI Infrastructure", tickers: ["NVDA", "AVGO", "SMCI", "VRT", "DELL", "ANET", "ARM"] },
-  { name: "Semis", tickers: ["AMD", "QCOM", "MRVL", "AMAT", "KLAC", "LRCX", "TXN", "NXPI", "ON", "TSM"] },
+  { name: "Semis", tickers: ["AMD", "QCOM", "MRVL", "AMAT", "KLAC", "LRCX", "TXN", "NXPI", "ON", "TSM", "MU"] },
   { name: "Quantum", tickers: ["IONQ", "RGTI"] },
   { name: "Space / Defense", tickers: ["RKLB", "LUNR", "RDW", "AVAV", "JOBY"] },
   { name: "AI Software", tickers: ["PLTR", "AI", "PATH", "DDOG", "SNOW", "MDB", "ESTC", "NOW"] },
@@ -100,7 +102,7 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
     tickers: [
       // Semis & equipment
       "AMAT", "AMBA", "AMD", "ADI", "ARM", "ASML", "AVGO", "CEVA", "COHR", "FORM", "INTC",
-      "KLAC", "LRCX", "MCHP", "MPWR", "MRVL", "NVDA", "NXPI", "ON", "QCOM", "TER", "TSM", "TXN",
+      "KLAC", "LRCX", "MCHP", "MPWR", "MRVL", "MU", "NVDA", "NXPI", "ON", "QCOM", "TER", "TSM", "TXN",
       // Software & cloud
       "ADBE", "ADSK", "AI", "ANSS", "APP", "BBAI", "CDNS", "CFLT", "CRM", "DDOG", "ESTC",
       "HCAT", "HUBS", "IBM", "INTU", "MDB", "NOW", "PATH", "PLTR", "SNOW", "SNPS", "SOUN", "TEAM",
@@ -145,7 +147,7 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
   },
   { name: "Energy & Utilities", tickers: ["CEG", "CVX", "ENPH", "OKLO", "PLUG", "RUN", "VST", "XOM"] },
   { name: "Crypto & Digital Assets", tickers: ["CIFR", "CLSK", "COIN", "IREN", "MARA", "MSTR", "RIOT", "WULF"] },
-  { name: "Diversified / Macro ETFs", tickers: ["IWM", "QQQ", "SPY", "TLT"] },
+  { name: "Diversified / Macro ETFs", tickers: ["IWM", "QQQ", "SLV", "SPY", "TLT"] },
 ];
 
 export const INDUSTRY_SECTORS = RAW_INDUSTRY_SECTORS.map((c) => ({
