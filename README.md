@@ -79,6 +79,28 @@ needs to be run once from a normal network (your machine, or after deploying) be
 trust it. If it errors, the `Reason` column in the UI (and the API's `skipReason` field)
 will say exactly why per ticker — it won't silently show -100/AVOID like the old app did.
 
+## Positions feed (live brokerage sync)
+
+The Positions tab renders `public/positions-live.json`, a snapshot written by
+`scripts/refresh-positions.mjs`, which pulls holdings through the local Plaid
+connection (`plaid investments-holdings`) and normalizes stocks + option
+contracts (strike/expiry parsed from the OCC-style contract code, with a name
+fallback). Plaid only exposes masked account digits, so the script matches the
+account by institution + name fragment (`--account "Prime Printer"`), never by
+account number.
+
+```bash
+node scripts/refresh-positions.mjs                  # auto-pick the investment account
+node scripts/refresh-positions.mjs --account "Prime" # match by name fragment
+```
+
+Run it on the machine that holds the Plaid connection, then redeploy - the tab
+fetches the JSON at runtime, so a fresh snapshot + redeploy is the whole sync.
+The UI shows the snapshot's as-of time with a Fresh/Stale/Very-stale badge and
+an honest "not linked" state when no investment account is connected through
+Plaid (Fidelity must be linked in Plaid first). The snapshot is gitignored -
+live account data never goes into the repo.
+
 ## Deploying
 
 1. Push this to a new GitHub repo (or `vercel deploy` directly from this folder with the
@@ -90,7 +112,7 @@ will say exactly why per ticker — it won't silently show -100/AVOID like the o
 ## What's deliberately NOT in here yet
 
 Per your instruction to keep this v1 scoped: no IV rank, no "Wall support" detection, no
-Theta Sniper auto-flagging, no account/position integration, no delta filtering (Yahoo's
+Theta Sniper auto-flagging, no delta filtering (Yahoo's
 options data gives implied volatility but not delta/gamma/theta out of the box). RSI < 35
 and bullish divergence contribute to the candidate score but are not blocking gates — only
 your five mandate rules (Max Pain, Rule 6, Earnings, 15% cap, 30% concentration) block a

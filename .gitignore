@@ -1,7 +1,15 @@
+# dependencies
 node_modules/
+
+# next.js
 .next/
-.env
-.env.local
-*.log
-*.tsbuildinfo
-full-scan-results-*.json
+out/
+build/
+
+# local dev
+*.local
+
+# position snapshots contain live account data - never committed.
+# The refresh script regenerates public/positions-live.json from Plaid;
+# deploys ship the working-tree copy, not a git-tracked one.
+public/positions-live.json
