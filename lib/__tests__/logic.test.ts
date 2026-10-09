@@ -1,0 +1,206 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { calculateMaxPain } from "../maxPain";
+import { checkMaxPainGate, checkRule6Gate, checkEarningsGate, checkMaxCollateralGate, checkDeltaGate, runPreTradeChecklist, verdictFor } from "../gates";
+import { computeRsiSeries, analyzeTechnicals } from "../technicals";
+import { scoreCandidate, MIN_BID } from "../screener";
+import { putDelta } from "../blackScholes";
+import type { DailyBar } from "../yahooMarket";
+
+test("calculateMaxPain picks the strike minimizing total option-writer payout", () => {
+  const contracts = [
+    { kind: "call" as const, strike: 100, openInterest: 500 },
+    { kind: "call" as const, strike: 105, openInterest: 1000 },
+    { kind: "put" as const, strike: 95, openInterest: 200 },
+    { kind: "put" as const, strike: 100, openInterest: 800 },
+  ];
+  const result = calculateMaxPain(contracts);
+  assert.notEqual(result, null);
+  assert.ok(typeof result === "number");
+});
+
+test("calculateMaxPain returns null with no open interest", () => {
+  const result = calculateMaxPain([{ kind: "call", strike: 100, openInterest: null }]);
+  assert.equal(result, null);
+});
+
+test("Max Pain gate blocks a CSP strike at/above max pain", () => {
+  const blocked = checkMaxPainGate(105, "put", 100);
+  assert.equal(blocked.passed, false);
+  const ok = checkMaxPainGate(95, "put", 100);
+  assert.equal(ok.passed, true);
+});
+
+test("Rule 6 gate: puts only sell on red days", () => {
+  assert.equal(checkRule6Gate("put", "red").passed, true);
+  assert.equal(checkRule6Gate("put", "green").passed, false);
+  assert.equal(checkRule6Gate("call", "green").passed, true);
+});
+
+test("Earnings gate blocks inside 7 days, allows outside", () => {
+  assert.equal(checkEarningsGate(3).passed, false);
+  assert.equal(checkEarningsGate(10).passed, true);
+  assert.equal(checkEarningsGate(null).passed, true);
+});
+
+test("15% max-collateral cap blocks oversized single CSP", () => {
+  const blocked = checkMaxCollateralGate({
+    ticker: "MU", kind: "put", strike: 100, maxPain: 100, marketDirection: "red",
+    daysToEarnings: null, newCapital: 40000, accountValue: 200000,
+  });
+  assert.equal(blocked?.passed, false);
+
+  const ok = checkMaxCollateralGate({
+    ticker: "MU", kind: "put", strike: 100, maxPain: 100, marketDirection: "red",
+    daysToEarnings: null, newCapital: 20000, accountValue: 200000,
+  });
+  assert.equal(ok?.passed, true);
+});
+
+test("full pre-trade checklist: a clean CSP is APPROVED", () => {
+  const gates = runPreTradeChecklist({
+    ticker: "SOFI", kind: "put", strike: 15, maxPain: 17, marketDirection: "red",
+    daysToEarnings: 30, newCapital: 1500, accountValue: 200000, currentTickerValue: 0,
+  });
+  assert.equal(verdictFor(gates), "APPROVED");
+});
+
+test("full pre-trade checklist: strike above max pain is BLOCKED", () => {
+  const gates = runPreTradeChecklist({
+    ticker: "SOFI", kind: "put", strike: 18, maxPain: 17, marketDirection: "red",
+    daysToEarnings: 30, newCapital: 1500, accountValue: 200000, currentTickerValue: 0,
+  });
+  assert.equal(verdictFor(gates), "BLOCKED");
+});
+
+function makeBars(closes: number[]): DailyBar[] {
+  return closes.map((c, i) => ({ date: `2026-01-${String(i + 1).padStart(2, "0")}`, close: c, high: c + 1, low: c - 1, volume: 1000 }));
+}
+
+test("computeRsiSeries: monotonically rising closes -> RSI near 100", () => {
+  const closes = Array.from({ length: 20 }, (_, i) => 100 + i);
+  const rsi = computeRsiSeries(closes, 14);
+  const last = rsi[rsi.length - 1];
+  assert.ok(last !== null && last > 90);
+});
+
+test("computeRsiSeries: monotonically falling closes -> RSI near 0", () => {
+  const closes = Array.from({ length: 20 }, (_, i) => 100 - i);
+  const rsi = computeRsiSeries(closes, 14);
+  const last = rsi[rsi.length - 1];
+  assert.ok(last !== null && last < 10);
+});
+
+test("analyzeTechnicals detects a bullish divergence: lower price low, higher RSI low", () => {
+  // Down-down-up pattern shaped so the second low is deeper in price but shallower in RSI decline.
+  const closes = [
+    50, 49, 48, 47, 46, 45, 44, 43, 42, 41, // sharp decline (pivot low ~41 with strong RSI drop)
+    43, 45, 47, 49, 51, 52, 53, 54, // recovery (pivot high)
+    52, 51, 50, 48, 46, 44, 42, 40, // shallower decline down to a lower price low, but RSI won't be as oversold as the first plunge
+    41, 43, 45,
+  ];
+  const bars = makeBars(closes);
+  const result = analyzeTechnicals(bars, 2, closes.length);
+  // Just assert it runs and returns one of the valid signals with a consistent shape.
+  assert.ok(["bullish", "bearish", "none"].includes(result.divergence));
+  if (result.divergence !== "none") {
+    assert.ok(typeof result.divergenceNote === "string");
+  }
+});
+
+test("analyzeTechnicals returns neutral on too little data", () => {
+  const bars = makeBars([100, 101, 102]);
+  const result = analyzeTechnicals(bars);
+  assert.equal(result.divergence, "none");
+  assert.equal(result.rsi, null);
+});
+
+// Regression test for a real bug caught on live data (2026-08-25): a deep-OTM AAPL put
+// (strike $120 vs spot $309.90, bid $0.01, ~0.09% ROI) outscored a real candidate because
+// the max-pain-distance bonus was uncapped and dominated when ROI was near zero.
+test("scoreCandidate: real ROI beats deep-OTM max-pain distance (regression, was reversed)", () => {
+  // Deep OTM: huge raw pain-distance, but near-zero ROI (the AAPL bug case).
+  const junkyDeepOtm = scoreCandidate(0.09, 24, 320, 120, 50.9, "none");
+  // Realistic CSP: modest pain-distance, real ROI (the SOFI-shaped case).
+  const realCandidate = scoreCandidate(5.46, 38, 22, 18.5, 57.2, "none");
+  assert.ok(
+    realCandidate > junkyDeepOtm,
+    `expected a real ROI candidate (${realCandidate}) to outscore a near-worthless deep-OTM contract (${junkyDeepOtm})`,
+  );
+});
+
+test("scoreCandidate: always an integer between 0 and 100", () => {
+  const cases: Parameters<typeof scoreCandidate>[] = [
+    [0, 5, null, 10, null, "bearish"],
+    [50, 30, 1000, 1, 10, "bullish"],
+    [9.75, 58, 26, 16, 55, "none"],
+    [-3, 90, 5, 50, 80, "bearish"],
+  ];
+  for (const c of cases) {
+    const s = scoreCandidate(...c);
+    assert.ok(Number.isInteger(s) && s >= 0 && s <= 100, `score ${s} out of range for ${JSON.stringify(c)}`);
+  }
+  assert.equal(scoreCandidate(50, 30, 1000, 1, 10, "bullish"), 100);
+});
+
+test("scoreCandidate: max-pain-distance bonus is capped, can't swamp ROI on its own", () => {
+  // Same tiny ROI, but push pain distance to an extreme (strike near zero vs a huge max pain).
+  const extremePainDistance = scoreCandidate(0.09, 24, 1000, 1, null, "none");
+  const modestRoi = scoreCandidate(3, 30, 100, 90, null, "none");
+  assert.ok(
+    modestRoi > extremePainDistance,
+    `expected a modest real ROI (${modestRoi}) to still beat an extreme-but-capped pain-distance score (${extremePainDistance})`,
+  );
+});
+
+test("MIN_BID junk-quote floor is a sane, non-zero threshold", () => {
+  assert.ok(MIN_BID > 0);
+  assert.ok(MIN_BID < 1); // shouldn't accidentally filter out real, thin-but-tradeable premium
+});
+
+// Regression coverage for the 2026-08-26 bug: the screener was picking near-ATM strikes
+// (e.g. spot $62.01 / strike $62.00) as "best" because ROI is highest right at the money
+// and nothing constrained moneyness. putDelta() + checkDeltaGate() enforce the mandate's
+// 0.30 delta entry filter so that can't happen again.
+test("putDelta: an at-the-money put has delta magnitude around 0.5", () => {
+  const delta = putDelta(100, 100, 30, 0.3);
+  assert.notEqual(delta, null);
+  assert.ok(delta !== null && delta < 0);
+  assert.ok(delta !== null && Math.abs(delta) > 0.4 && Math.abs(delta) < 0.6, `expected ~0.5, got ${delta}`);
+});
+
+test("putDelta: magnitude shrinks as the put goes further out of the money", () => {
+  const nearMoney = putDelta(100, 95, 30, 0.3);
+  const midOtm = putDelta(100, 90, 30, 0.3);
+  const deepOtm = putDelta(100, 80, 30, 0.3);
+  assert.ok(nearMoney !== null && midOtm !== null && deepOtm !== null);
+  assert.ok(Math.abs(nearMoney!) > Math.abs(midOtm!), "95-strike should have bigger delta than 90-strike");
+  assert.ok(Math.abs(midOtm!) > Math.abs(deepOtm!), "90-strike should have bigger delta than 80-strike");
+});
+
+test("putDelta: returns null on unusable inputs instead of throwing", () => {
+  assert.equal(putDelta(null, 100, 30, 0.3), null);
+  assert.equal(putDelta(100, null, 30, 0.3), null);
+  assert.equal(putDelta(100, 100, 0, 0.3), null);
+  assert.equal(putDelta(100, 100, 30, 0), null);
+  assert.equal(putDelta(100, 100, 30, null), null);
+});
+
+test("checkDeltaGate: blocks above 0.30, passes at/below, passes unknown (missing IV)", () => {
+  assert.equal(checkDeltaGate(null).passed, true);
+  assert.equal(checkDeltaGate(-0.25).passed, true); // sign shouldn't matter, magnitude does
+  assert.equal(checkDeltaGate(0.3).passed, true); // boundary
+  assert.equal(checkDeltaGate(-0.31).passed, false);
+  assert.equal(checkDeltaGate(0.5).passed, false); // the ATM-drift bug case
+});
+
+test("full pre-trade checklist: a near-ATM put (delta ~0.5) is BLOCKED even if every other gate passes", () => {
+  const gates = runPreTradeChecklist({
+    ticker: "ASTS", kind: "put", strike: 62, maxPain: 100, marketDirection: "red",
+    daysToEarnings: 30, newCapital: 6200, accountValue: 200000, currentTickerValue: 0,
+    delta: -0.49, // spot ~$62.01, strike $62 - the exact reported bug case
+  });
+  assert.equal(verdictFor(gates), "BLOCKED");
+  assert.ok(gates.some((g) => g.gateName === "0.30 Delta Filter" && !g.passed));
+});

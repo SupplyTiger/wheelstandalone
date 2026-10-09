@@ -1,0 +1,308 @@
+// CSP screener orchestrator.
+//
+// Design principle (learned from the old app's failure): one ticker's data problem must
+// never blank out the whole screener, and a skip reason must always be the REAL reason —
+// never a generic catch-all that lies about why a ticker was dropped (see the
+// CODEX-BRIEF-csp-screener.md postmortem on the old desktop app for exactly this bug).
+
+import { runPreTradeChecklist, verdictFor, currency, type MarketDirection } from "./gates";
+import { fetchOptionsSummary, fetchDailyBars, type NormalizedContract } from "./yahooMarket";
+import { analyzeTechnicals, type DivergenceSignal } from "./technicals";
+import { fetchNextEarningsDate } from "./earnings";
+import { putDelta } from "./blackScholes";
+
+// 0.30 Delta entry filter tolerance (matches checkDeltaGate in gates.ts).
+const MAX_ENTRY_DELTA = 0.3 + 1e-9;
+
+export type ScreenerParams = {
+  tickers: string[];
+  dteMin: number;
+  dteMax: number;
+  minRoiPct: number;
+  excludeEarningsWithinDays: number;
+  accountValue: number;
+};
+
+export type CandidateStatus = "ready" | "watch" | "avoid";
+
+export type CspCandidateRow = {
+  ticker: string;
+  status: CandidateStatus;
+  verdict: "APPROVED" | "BLOCKED" | null;
+  score: number | null;
+  price: number | null;
+  dayChange: number | null;
+  dayChangePct: number | null;
+  strike: number | null;
+  expiry: string | null;
+  dte: number | null;
+  bid: number | null;
+  credit: number | null;
+  roiPct: number | null;
+  annRoiPct: number | null;
+  maxPain: number | null;
+  rsi: number | null;
+  divergence: DivergenceSignal;
+  divergenceNote: string | null;
+  daysToEarnings: number | null;
+  delta: number | null;
+  iv: number | null;
+  blockReasons: string[];
+  skipReason: string | null;
+};
+
+function daysToExpiry(expiry: string): number | null {
+  const d = new Date(`${expiry}T20:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.round((d.getTime() - Date.now()) / 86_400_000));
+}
+
+function mid(contract: NormalizedContract): number | null {
+  if (contract.bid !== null && contract.ask !== null && contract.bid > 0 && contract.ask >= contract.bid) {
+    return Number(((contract.bid + contract.ask) / 2).toFixed(2));
+  }
+  return contract.bid && contract.bid > 0 ? contract.bid : null;
+}
+
+// Minimum bid before a contract is even considered a candidate. Anything below this is
+// an unfillable "junk" quote (a real bug this exact constant was added to fix: on live
+// data, a deep-OTM $309 AAPL's $120 put with a $0.01 bid was outscoring every real
+// candidate because the uncapped max-pain-distance bonus below swamped its near-zero ROI).
+export const MIN_BID = 0.05;
+
+// Score is always 0-100, built from five capped components so no single input can run away:
+//   ROI (raw, per trade) ........ up to 50  (8%+ ROI earns the full 50)
+//   Max-pain cushion ............ up to 15  (1 point per % the strike sits below max pain)
+//   DTE fit ..................... up to 15  (21-45 DTE = 15, 14-60 DTE = 7, otherwise 0)
+//   RSI ......................... up to 10  (< 35 = 10, < 45 = 5, otherwise 0)
+//   Divergence .................. up to 10  (bullish = 10, none = 5, bearish = 0)
+export const SCORE_WEIGHTS = { roi: 50, roiFullAtPct: 8, painCushion: 15, dte: 15, rsi: 10, divergence: 10 } as const;
+
+export function scoreCandidate(roiPct: number, dte: number, maxPain: number | null, strike: number, rsi: number | null, divergence: DivergenceSignal) {
+  const w = SCORE_WEIGHTS;
+  const roiPts = Math.min(Math.max(roiPct, 0) / w.roiFullAtPct, 1) * w.roi;
+  const painDistancePct = maxPain && maxPain > 0 ? Math.max(0, ((maxPain - strike) / maxPain) * 100) : 0;
+  const painPts = Math.min(painDistancePct, w.painCushion);
+  const dtePts = dte >= 21 && dte <= 45 ? w.dte : dte >= 14 && dte <= 60 ? 7 : 0;
+  const rsiPts = rsi === null ? 0 : rsi < 35 ? w.rsi : rsi < 45 ? 5 : 0;
+  const divPts = divergence === "bullish" ? w.divergence : divergence === "bearish" ? 0 : 5;
+  const total = roiPts + painPts + dtePts + rsiPts + divPts;
+  return Math.round(Math.min(100, Math.max(0, total)));
+}
+
+async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<CspCandidateRow> {
+  const base: CspCandidateRow = {
+    ticker,
+    status: "avoid",
+    verdict: null,
+    score: null,
+    price: null,
+    dayChange: null,
+    dayChangePct: null,
+    strike: null,
+    expiry: null,
+    dte: null,
+    bid: null,
+    credit: null,
+    roiPct: null,
+    annRoiPct: null,
+    maxPain: null,
+    rsi: null,
+    divergence: "none",
+    divergenceNote: null,
+    daysToEarnings: null,
+    delta: null,
+    iv: null,
+    blockReasons: [],
+    skipReason: null,
+  };
+
+  const expiryFrom = new Date(Date.now() + params.dteMin * 86_400_000).toISOString().slice(0, 10);
+  const expiryTo = new Date(Date.now() + params.dteMax * 86_400_000).toISOString().slice(0, 10);
+
+  const [chainResult, barsResult, earningsResult] = await Promise.allSettled([
+    fetchOptionsSummary(ticker, expiryFrom, expiryTo),
+    fetchDailyBars(ticker, 120),
+    fetchNextEarningsDate(ticker),
+  ]);
+
+  if (chainResult.status === "rejected") {
+    base.skipReason = chainResult.reason instanceof Error ? chainResult.reason.message : "Failed to load option chain";
+    return base;
+  }
+  const chain = chainResult.value;
+  base.price = chain.underlyingPrice;
+  base.dayChange = chain.dayChange;
+  base.dayChangePct = chain.dayChangePct;
+  base.maxPain = chain.maxPain;
+
+  if (chain.underlyingPrice === null) {
+    base.skipReason = "No live underlying price returned";
+    return base;
+  }
+
+  let marketDirection: MarketDirection = "red";
+  let technicals = { rsi: null as number | null, divergence: "none" as DivergenceSignal, divergenceNote: null as string | null };
+  if (barsResult.status === "fulfilled" && barsResult.value.length >= 2) {
+    const bars = barsResult.value;
+    const last = bars[bars.length - 1];
+    const prev = bars[bars.length - 2];
+    marketDirection = last.close >= prev.close ? "green" : "red";
+    if (base.dayChangePct === null && prev.close) {
+      base.dayChange = last.close - prev.close;
+      base.dayChangePct = ((last.close - prev.close) / prev.close) * 100;
+    }
+    technicals = analyzeTechnicals(bars);
+  } else {
+    base.skipReason = barsResult.status === "rejected" ? `Technicals unavailable: ${(barsResult.reason as Error)?.message ?? "no bars"}` : null;
+  }
+  if (base.dayChangePct !== null) marketDirection = base.dayChangePct >= 0 ? "green" : "red";
+  base.rsi = technicals.rsi;
+  base.divergence = technicals.divergence;
+  base.divergenceNote = technicals.divergenceNote;
+
+  const daysToEarnings = earningsResult.status === "fulfilled" ? earningsResult.value?.daysToEarnings ?? null : null;
+  base.daysToEarnings = daysToEarnings;
+
+  // Candidate puts: OTM (strike below spot), inside the DTE window, quotable.
+  const puts = chain.contractsList.filter((c) => c.kind === "put" && c.strike !== null && c.strike < (chain.underlyingPrice as number));
+  const withDte = puts
+    .map((c) => ({ contract: c, dte: daysToExpiry(c.expiry) }))
+    .filter((c): c is { contract: NormalizedContract; dte: number } => c.dte !== null && c.dte >= params.dteMin && c.dte <= params.dteMax);
+
+  if (!withDte.length) {
+    base.skipReason = `No put contracts between ${params.dteMin}-${params.dteMax} DTE with strike below spot ${currency(chain.underlyingPrice)}`;
+    return base;
+  }
+
+  // Two running bests: one restricted to contracts that pass the 0.30 delta entry filter
+  // (preferred - this is what should actually get picked), and one unrestricted (fallback
+  // only so a ticker never silently vanishes; it'll get BLOCKED by the delta gate below
+  // with a visible reason instead). Without this split, the highest-ROI contract tends to
+  // win regardless of moneyness, which drifts the "best" strike toward the money - ROI is
+  // highest right at the strike closest to spot, exactly where assignment risk is highest.
+  type Candidate = { contract: NormalizedContract; dte: number; m: number; roiPct: number; score: number; delta: number | null };
+  let bestCompliant: Candidate | null = null;
+  let bestAny: Candidate | null = null;
+  let sawQuotedContract = false;
+  for (const { contract, dte } of withDte) {
+    if (contract.bid !== null && contract.bid > 0) sawQuotedContract = true;
+    // A bid below MIN_BID is a junk/unfillable quote, not a real candidate.
+    if (contract.bid === null || contract.bid < MIN_BID || contract.strike === null) continue;
+    const m = mid(contract);
+    if (m === null || m <= 0) continue;
+    const capital = contract.strike * 100;
+    const credit = m * 100;
+    const roiPct = (credit / capital) * 100;
+    const delta = putDelta(chain.underlyingPrice, contract.strike, dte, contract.impliedVolatility);
+    const score = scoreCandidate(roiPct, dte, chain.maxPain, contract.strike, technicals.rsi, technicals.divergence);
+    const candidate = { contract, dte, m, roiPct, score, delta };
+    if (!bestAny || score > bestAny.score) bestAny = candidate;
+    const deltaOk = delta === null || Math.abs(delta) <= MAX_ENTRY_DELTA;
+    if (deltaOk && (!bestCompliant || score > bestCompliant.score)) bestCompliant = candidate;
+  }
+  const best = bestCompliant ?? bestAny;
+
+  if (!best) {
+    base.skipReason = sawQuotedContract
+      ? `Chain has quotes in range, but every bid is below the $${MIN_BID.toFixed(2)} junk-quote floor`
+      : "No two-sided (bid/ask) quotes in range - chain listed but unquoted";
+    return base;
+  }
+
+  const strike = best.contract.strike as number;
+  const credit = Number((best.m * 100).toFixed(2));
+  const capital = strike * 100;
+  const annRoiPct = best.dte > 0 ? (best.roiPct * 365) / best.dte : null;
+
+  const gates = chain.maxPain
+    ? runPreTradeChecklist({
+        ticker,
+        kind: "put",
+        strike,
+        maxPain: chain.maxPain,
+        marketDirection,
+        daysToEarnings,
+        newCapital: capital,
+        accountValue: params.accountValue,
+        currentTickerValue: 0,
+        delta: best.delta,
+      })
+    : [{ passed: false, gateName: "Max Pain", reason: "Max pain unavailable (insufficient open interest data)" }];
+
+  const verdict = verdictFor(gates) as "APPROVED" | "BLOCKED";
+  const blockReasons = gates.filter((g) => !g.passed).map((g) => g.reason ?? g.gateName);
+
+  const earningsBlocked = daysToEarnings !== null && daysToEarnings >= 0 && daysToEarnings <= params.excludeEarningsWithinDays;
+  if (earningsBlocked && !blockReasons.some((r) => r.toLowerCase().includes("earnings"))) {
+    blockReasons.push(`Earnings in ${daysToEarnings}d - inside ${params.excludeEarningsWithinDays}d exclusion window`);
+  }
+
+  const meetsRoi = best.roiPct >= params.minRoiPct;
+  const status: CandidateStatus = verdict === "APPROVED" && !earningsBlocked && meetsRoi ? "ready" : verdict === "APPROVED" && !earningsBlocked ? "watch" : "avoid";
+
+  return {
+    ...base,
+    status,
+    verdict,
+    score: best.score,
+    strike,
+    expiry: best.contract.expiry,
+    dte: best.dte,
+    bid: best.contract.bid,
+    credit,
+    roiPct: Number(best.roiPct.toFixed(2)),
+    annRoiPct: annRoiPct !== null ? Number(annRoiPct.toFixed(1)) : null,
+    delta: best.delta !== null ? Number(best.delta.toFixed(3)) : null,
+    iv: best.contract.impliedVolatility !== null ? Number((best.contract.impliedVolatility * 100).toFixed(1)) : null,
+    blockReasons: earningsBlocked ? [...blockReasons] : blockReasons,
+    skipReason: null,
+  };
+}
+
+export async function runScreener(params: ScreenerParams) {
+  const results = await Promise.all(params.tickers.map((ticker) => screenOneTicker(ticker, params).catch((error) => ({
+    ...({} as CspCandidateRow),
+    ticker,
+    status: "avoid" as CandidateStatus,
+    verdict: null,
+    score: null,
+    price: null,
+    dayChange: null,
+    dayChangePct: null,
+    strike: null,
+    expiry: null,
+    dte: null,
+    bid: null,
+    credit: null,
+    roiPct: null,
+    annRoiPct: null,
+    maxPain: null,
+    rsi: null,
+    divergence: "none" as DivergenceSignal,
+    divergenceNote: null,
+    daysToEarnings: null,
+    delta: null,
+    iv: null,
+    blockReasons: [],
+    skipReason: error instanceof Error ? error.message : "Unexpected screener error",
+  }))));
+
+  results.sort((a, b) => {
+    const order = { ready: 0, watch: 1, avoid: 2 } as const;
+    if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+    return (b.score ?? -Infinity) - (a.score ?? -Infinity);
+  });
+
+  return {
+    scannedAt: new Date().toISOString(),
+    results,
+    summary: {
+      scanned: results.length,
+      ready: results.filter((r) => r.status === "ready").length,
+      watch: results.filter((r) => r.status === "watch").length,
+      avoid: results.filter((r) => r.status === "avoid").length,
+      errors: results.filter((r) => r.skipReason !== null).length,
+    },
+  };
+}
