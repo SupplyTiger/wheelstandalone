@@ -10,6 +10,13 @@ import { fetchOptionsSummary, fetchDailyBars, type NormalizedContract } from "./
 import { analyzeTechnicals, type DivergenceSignal } from "./technicals";
 import { fetchNextEarningsDate } from "./earnings";
 import { putDelta } from "./blackScholes";
+import {
+  checkFreeCashGate,
+  duplicateShortPutReason,
+  findShortPut,
+  tickerExposure,
+  type AccountContext,
+} from "./positions";
 
 // 0.30 Delta entry filter tolerance (matches checkDeltaGate in gates.ts).
 const MAX_ENTRY_DELTA = 0.3 + 1e-9;
@@ -21,6 +28,13 @@ export type ScreenerParams = {
   minRoiPct: number;
   excludeEarningsWithinDays: number;
   accountValue: number;
+  /**
+   * Per-account position context (from the Plaid feed — see lib/positions.ts).
+   * Absent = the historical position-blind behavior: concentration counts only
+   * the new trade, no duplicate-short or free-cash checks. Present = the
+   * screener knows the book and filters against it.
+   */
+  accountContext?: AccountContext | null;
 };
 
 export type CandidateStatus = "ready" | "watch" | "avoid";
@@ -49,6 +63,10 @@ export type CspCandidateRow = {
   iv: number | null;
   blockReasons: string[];
   skipReason: string | null;
+  /** True when this account already holds a short put on this ticker. */
+  alreadyShortPut: boolean;
+  /** Existing exposure to this ticker from the position context (null = no context passed). */
+  existingTickerValue: number | null;
 };
 
 function daysToExpiry(expiry: string): number | null {
@@ -115,6 +133,8 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     iv: null,
     blockReasons: [],
     skipReason: null,
+    alreadyShortPut: false,
+    existingTickerValue: null,
   };
 
   const expiryFrom = new Date(Date.now() + params.dteMin * 86_400_000).toISOString().slice(0, 10);
@@ -215,6 +235,13 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
   const capital = strike * 100;
   const annRoiPct = best.dte > 0 ? (best.roiPct * 365) / best.dte : null;
 
+  // Position context: when the caller passed the book, the concentration gate
+  // counts what the account ALREADY holds in this ticker (not just the new
+  // trade), and two new hard blocks apply below. Without context, this is
+  // exactly the historical behavior (currentTickerValue 0, no extra blocks).
+  const ctx = params.accountContext ?? null;
+  const existingTickerValue = ctx ? tickerExposure(ctx.positions, ticker) : null;
+
   const gates = chain.maxPain
     ? runPreTradeChecklist({
         ticker,
@@ -225,18 +252,40 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
         daysToEarnings,
         newCapital: capital,
         accountValue: params.accountValue,
-        currentTickerValue: 0,
+        currentTickerValue: existingTickerValue ?? 0,
         delta: best.delta,
       })
     : [{ passed: false, gateName: "Max Pain", reason: "Max pain unavailable (insufficient open interest data)" }];
 
-  const verdict = verdictFor(gates) as "APPROVED" | "BLOCKED";
   const blockReasons = gates.filter((g) => !g.passed).map((g) => g.reason ?? g.gateName);
 
   const earningsBlocked = daysToEarnings !== null && daysToEarnings >= 0 && daysToEarnings <= params.excludeEarningsWithinDays;
   if (earningsBlocked && !blockReasons.some((r) => r.toLowerCase().includes("earnings"))) {
     blockReasons.push(`Earnings in ${daysToEarnings}d - inside ${params.excludeEarningsWithinDays}d exclusion window`);
   }
+
+  // Position-aware blocks. These flip the verdict to BLOCKED (unlike the
+  // earnings exclusion, which only forces status to avoid): doubling an
+  // existing short put, or sizing a CSP the account cannot cash-secure,
+  // are not candidates at all.
+  let alreadyShortPut = false;
+  let positionBlocked = false;
+  if (ctx) {
+    const dup = findShortPut(ctx.positions, ticker);
+    if (dup) {
+      alreadyShortPut = true;
+      positionBlocked = true;
+      blockReasons.push(duplicateShortPutReason(dup));
+    }
+    const freeCash = checkFreeCashGate(capital, ctx.freeCash ?? null);
+    if (freeCash && !freeCash.passed) {
+      positionBlocked = true;
+      blockReasons.push(freeCash.reason ?? freeCash.gateName);
+    }
+  }
+
+  const verdict =
+    verdictFor(gates) === "BLOCKED" || positionBlocked ? "BLOCKED" : "APPROVED";
 
   const meetsRoi = best.roiPct >= params.minRoiPct;
   const status: CandidateStatus = verdict === "APPROVED" && !earningsBlocked && meetsRoi ? "ready" : verdict === "APPROVED" && !earningsBlocked ? "watch" : "avoid";
@@ -257,6 +306,8 @@ async function screenOneTicker(ticker: string, params: ScreenerParams): Promise<
     iv: best.contract.impliedVolatility !== null ? Number((best.contract.impliedVolatility * 100).toFixed(1)) : null,
     blockReasons: earningsBlocked ? [...blockReasons] : blockReasons,
     skipReason: null,
+    alreadyShortPut,
+    existingTickerValue,
   };
 }
 
@@ -286,6 +337,8 @@ export async function runScreener(params: ScreenerParams) {
     iv: null,
     blockReasons: [],
     skipReason: error instanceof Error ? error.message : "Unexpected screener error",
+    alreadyShortPut: false,
+    existingTickerValue: null,
   }))));
 
   results.sort((a, b) => {
@@ -294,8 +347,20 @@ export async function runScreener(params: ScreenerParams) {
     return (b.score ?? -Infinity) - (a.score ?? -Infinity);
   });
 
+  const ctx = params.accountContext ?? null;
   return {
     scannedAt: new Date().toISOString(),
+    // Echo of the position context the scan was filtered against (null when
+    // the caller passed none — the historical position-blind call).
+    accountContext: ctx
+      ? {
+          account: ctx.account ?? null,
+          accountValue: params.accountValue,
+          freeCash: ctx.freeCash ?? null,
+          reservedCollateral: ctx.reservedCollateral ?? null,
+          positionCount: ctx.positions.length,
+        }
+      : null,
     results,
     summary: {
       scanned: results.length,

@@ -11,7 +11,7 @@
 // Fidelity's account number is NOT used for matching: Plaid only exposes masked
 // digits. Match by institution display name + account name fragment instead.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -24,15 +24,41 @@ const args = process.argv.slice(2);
 const nameFilter = args.includes("--account") ? args[args.indexOf("--account") + 1] : null;
 
 function plaidJson(cmdArgs) {
-  try {
-    const raw = execFileSync("plaid", cmdArgs, { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
-    return JSON.parse(raw);
-  } catch (e) {
-    // Surface Plaid's own error summary (stderr) instead of the raw "Command failed" line.
-    const detail = (e.stderr || "").toString().split("\n")[0].slice(0, 200);
-    const err = new Error(detail || e.message.split("\n")[0]);
-    throw err;
+  // NOTE (2026-10-24): the CLI exits nonzero on partial reads (any institution
+  // failing) while still printing the good institutions' JSON to stdout, plus
+  // a trailing "Error: ..." line. execFileSync + JSON.parse threw that output
+  // away; parse only the first JSON document instead (same approach as
+  // refresh-positions-by-account.mjs).
+  const res = spawnSync("plaid", cmdArgs, { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
+  const text = res.stdout || "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (start === -1) {
+      if (ch === "{" || ch === "[") {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") {
+      depth--;
+      if (depth === 0) return JSON.parse(text.slice(start, i + 1));
+    }
   }
+  const detail = (res.stderr || "").toString().split("\n")[0].slice(0, 200);
+  throw new Error(detail || `plaid ${cmdArgs.join(" ")} exited ${res.status} with no JSON output`);
 }
 
 function notLinkedSnapshot(reason) {

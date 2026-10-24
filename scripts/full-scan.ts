@@ -60,6 +60,7 @@ async function main() {
           expiry: null, dte: null, bid: null, credit: null, roiPct: null, annRoiPct: null,
           maxPain: null, rsi: null, divergence: "none", divergenceNote: null, daysToEarnings: null,
           delta: null, iv: null, blockReasons: [], skipReason: err instanceof Error ? err.message : "Batch failed",
+          alreadyShortPut: false, existingTickerValue: null,
         });
       }
       errors += batch.length;
