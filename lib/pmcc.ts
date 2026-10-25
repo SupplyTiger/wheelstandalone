@@ -34,7 +34,8 @@
 // or Z" requirement). Flags highlight; they never block. A "ready" structure
 // with outlier flags is the point of the screen: an extreme worth a look.
 
-import { fetchOptionsSummary, fetchDailyBars, type NormalizedContract } from "./yahooMarket";
+import { fetchDailyBars, type DailyBar, type NormalizedContract } from "./yahooMarket";
+import { fetchChainStack, type ChainSource } from "./marketData";
 import { fetchNextEarningsDate } from "./earnings";
 import { callDelta } from "./blackScholes";
 import { checkRule6Gate, currency, type MarketDirection } from "./gates";
@@ -120,6 +121,13 @@ export type PmccCandidateRow = {
   outlierFlags: OutlierFlag[];
   isOutlier: boolean;
   existingTickerValue: number | null;
+  /** Which chain layer won ("mixed" when the two windows came from different
+   * sources, null when no chain was fetched). Delayed layers are named,
+   * never hidden: a "cboe"/"tradier" row is ~15 minutes delayed. */
+  chainSource: ChainSource | "mixed" | null;
+  /** Earlier layers' error messages for the winning chains, plus the fatal
+   * errors when a window failed outright. Empty = Yahoo won cleanly. */
+  sourceErrors: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -169,6 +177,20 @@ export function concentrationBlock(
     return `${ticker.toUpperCase()} would be ${pct.toFixed(1)}% of portfolio (30% limit)`;
   }
   return null;
+}
+
+/**
+ * Skip reason when BOTH chain windows fail — with the underlying errors
+ * attached, not a bare "No option chain". The old message hid whether
+ * Yahoo throttled, CBOE reshaped, or Tradier was dormant; this one names
+ * it. Pure and unit-tested.
+ */
+export function chainSkipReason(shortError: string | null, leapsError: string | null): string {
+  const parts: string[] = [];
+  if (shortError) parts.push(`short window: ${shortError}`);
+  if (leapsError) parts.push(`LEAPS window: ${leapsError}`);
+  const detail = parts.length ? ` (${parts.join("; ")})` : "";
+  return `No option chain returned for the short or LEAPS window${detail}`;
 }
 
 /** Short-leg annualized yield: premium vs LEAPS debit, annualized. */
@@ -232,7 +254,7 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
     ivTermSpreadPp: null, callPutSkewPp: null, widthFloor: null,
     widthRule: "unknown", widthBasis: "unknown", daysToEarnings: null,
     blockReasons: [], skipReason: null, managementFlags: [], outlierFlags: [],
-    isOutlier: false, existingTickerValue: null,
+    isOutlier: false, existingTickerValue: null, chainSource: null, sourceErrors: [],
   };
 
   const ctx = params.accountContext ?? null;
@@ -246,21 +268,63 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
   const leapsFrom = new Date(Date.now() + params.leapsDteMin * 86_400_000).toISOString().slice(0, 10);
   const leapsTo = new Date(Date.now() + params.leapsDteMax * 86_400_000).toISOString().slice(0, 10);
 
-  const [shortResult, leapsResult, barsResult, earningsResult] = await Promise.allSettled([
-    fetchOptionsSummary(ticker, shortFrom, shortTo),
-    fetchOptionsSummary(ticker, leapsFrom, leapsTo),
-    fetchDailyBars(ticker, 120),
-    fetchNextEarningsDate(ticker),
-  ]);
+  // SEQUENTIAL, not concurrent — the market-data stack's core Yahoo fix.
+  // The old code fired both chain windows + bars + earnings concurrently
+  // per ticker, and runPmccScreener fired all tickers concurrently: a
+  // burst that Yahoo answers with throttling on shared egress. Each
+  // window now walks the stack (Yahoo resilient -> CBOE delayed ->
+  // Tradier sandbox) one step at a time, and each failure is kept with
+  // its message instead of collapsing into a bare skip.
+  let shortChain: Awaited<ReturnType<typeof fetchChainStack>>["summary"] | null = null;
+  let leapsChain: Awaited<ReturnType<typeof fetchChainStack>>["summary"] | null = null;
+  let shortError: string | null = null;
+  let leapsError: string | null = null;
+  let shortSource: ChainSource | null = null;
+  let leapsSource: ChainSource | null = null;
+  const stackErrors: string[] = [];
+  try {
+    const r = await fetchChainStack(ticker, shortFrom, shortTo);
+    shortChain = r.summary;
+    shortSource = r.source;
+    stackErrors.push(...r.sourceErrors);
+  } catch (error) {
+    shortError = error instanceof Error ? error.message : "Unknown short-window chain error";
+  }
+  try {
+    const r = await fetchChainStack(ticker, leapsFrom, leapsTo);
+    leapsChain = r.summary;
+    leapsSource = r.source;
+    stackErrors.push(...r.sourceErrors);
+  } catch (error) {
+    leapsError = error instanceof Error ? error.message : "Unknown LEAPS-window chain error";
+  }
+  let bars: DailyBar[] | null = null;
+  try {
+    bars = await fetchDailyBars(ticker, 120);
+  } catch {
+    bars = null; // bars failing is non-fatal: direction falls back to dayChangePct
+  }
+  let earningsDays: number | null = null;
+  try {
+    earningsDays = (await fetchNextEarningsDate(ticker))?.daysToEarnings ?? null;
+  } catch {
+    earningsDays = null; // earnings failing is null-tolerant by design
+  }
 
-  if (shortResult.status === "rejected" && leapsResult.status === "rejected") {
-    base.skipReason = "No option chain returned by Yahoo for the short or LEAPS window";
+  if (shortChain === null && leapsChain === null) {
+    base.skipReason = chainSkipReason(shortError, leapsError);
+    base.sourceErrors = [shortError, leapsError].filter((e): e is string => e !== null);
     return base;
   }
   // Either chain may fail alone (thin name, one bad window) — the other still
   // tells us what it can; the missing leg is reported, not papered over.
-  const shortChain = shortResult.status === "fulfilled" ? shortResult.value : null;
-  const leapsChain = leapsResult.status === "fulfilled" ? leapsResult.value : null;
+  base.chainSource =
+    shortSource !== null && leapsSource !== null
+      ? shortSource === leapsSource
+        ? shortSource
+        : "mixed"
+      : (shortSource ?? leapsSource);
+  base.sourceErrors = stackErrors;
   const price = (shortChain ?? leapsChain)?.underlyingPrice ?? null;
   base.price = price;
   base.dayChangePct = (shortChain ?? leapsChain)?.dayChangePct ?? null;
@@ -270,8 +334,7 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
   }
 
   let marketDirection: MarketDirection = "red";
-  if (barsResult.status === "fulfilled" && barsResult.value.length >= 2) {
-    const bars = barsResult.value;
+  if (bars !== null && bars.length >= 2) {
     marketDirection = bars[bars.length - 1].close >= bars[bars.length - 2].close ? "green" : "red";
     if (base.dayChangePct === null) {
       const last = bars[bars.length - 1].close;
@@ -281,7 +344,7 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
   } else if (base.dayChangePct !== null) {
     marketDirection = base.dayChangePct >= 0 ? "green" : "red";
   }
-  const daysToEarnings = earningsResult.status === "fulfilled" ? earningsResult.value?.daysToEarnings ?? null : null;
+  const daysToEarnings = earningsDays;
   base.daysToEarnings = daysToEarnings;
 
   // ---- Long leg -----------------------------------------------------------
@@ -330,7 +393,8 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
     // values on `base.*` and `leapsDebitPerShare`, not on a fresh LegQuote.
   } else {
     if (!leapsChain) {
-      base.skipReason = "LEAPS chain unavailable from Yahoo for this ticker";
+      base.skipReason = `LEAPS chain unavailable (${leapsError ?? "unknown stack error"})`;
+      base.sourceErrors = [leapsError].filter((e): e is string => e !== null);
       return base;
     }
     const candidates: LegQuote[] = [];
@@ -384,7 +448,8 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
 
   // ---- Short leg ----------------------------------------------------------
   if (!shortChain) {
-    base.skipReason = "Short-leg chain unavailable from Yahoo for this ticker";
+    base.skipReason = `Short-leg chain unavailable (${shortError ?? "unknown stack error"})`;
+    base.sourceErrors = [shortError].filter((e): e is string => e !== null);
     return base;
   }
   const shortCandidates: LegQuote[] = [];
@@ -524,25 +589,32 @@ async function screenOneTicker(ticker: string, params: PmccParams): Promise<Pmcc
 }
 
 export async function runPmccScreener(params: PmccParams) {
-  const rows = await Promise.all(
-    params.tickers.map((ticker) =>
-      screenOneTicker(ticker, params).catch((error) => {
-        const empty: PmccCandidateRow = {
-          ticker, status: "avoid", verdict: null, price: null, dayChangePct: null,
-          mode: "fresh", leapsStrike: null, leapsExpiry: null, leapsDte: null,
-          leapsMid: null, leapsDebit: null, leapsDelta: null, leapsIv: null,
-          leapsExtrinsic: null, leapsExtrinsicPerDelta: null, shortStrike: null,
-          shortExpiry: null, shortDte: null, shortMid: null, shortCredit: null,
-          shortDelta: null, shortIv: null, premiumSharePct: null, annYieldPct: null,
-          ivTermSpreadPp: null, callPutSkewPp: null, widthFloor: null,
-          widthRule: "unknown", widthBasis: "unknown", daysToEarnings: null,
-          blockReasons: [], skipReason: error instanceof Error ? error.message : "Unexpected PMCC screener error",
-          managementFlags: [], outlierFlags: [], isOutlier: false, existingTickerValue: null,
-        };
-        return empty;
-      }),
-    ),
-  );
+  // SEQUENTIAL ticker loop — the second half of the burst fix. The old
+  // Promise.all fired every ticker's four Yahoo calls at once; on shared
+  // egress that reads as a burst and gets throttled. Sequential is slower
+  // per scan, so keep universes modest (~10 tickers per call stays inside
+  // the route's 60s limit, as the route already documents). The chain
+  // cache makes repeat screens cheap.
+  const rows: PmccCandidateRow[] = [];
+  for (const ticker of params.tickers) {
+    try {
+      rows.push(await screenOneTicker(ticker, params));
+    } catch (error) {
+      rows.push({
+        ticker, status: "avoid", verdict: null, price: null, dayChangePct: null,
+        mode: "fresh", leapsStrike: null, leapsExpiry: null, leapsDte: null,
+        leapsMid: null, leapsDebit: null, leapsDelta: null, leapsIv: null,
+        leapsExtrinsic: null, leapsExtrinsicPerDelta: null, shortStrike: null,
+        shortExpiry: null, shortDte: null, shortMid: null, shortCredit: null,
+        shortDelta: null, shortIv: null, premiumSharePct: null, annYieldPct: null,
+        ivTermSpreadPp: null, callPutSkewPp: null, widthFloor: null,
+        widthRule: "unknown", widthBasis: "unknown", daysToEarnings: null,
+        blockReasons: [], skipReason: error instanceof Error ? error.message : "Unexpected PMCC screener error",
+        managementFlags: [], outlierFlags: [], isOutlier: false, existingTickerValue: null,
+        chainSource: null, sourceErrors: [],
+      });
+    }
+  }
 
   // Outlier population = rows with a complete structure only. Skipped rows
   // (no structure) carry no metrics and must not dilute the population.
@@ -576,7 +648,10 @@ export async function runPmccScreener(params: PmccParams) {
       : null,
     dataNote:
       "Yahoo IV and delta are model outputs, not exchange quotes, and chains can be stale. " +
-      "Rows are candidates for Ryan's review only — never a fill verification, never a trade.",
+      "Chains come from the market-data stack: Yahoo first, then CBOE delayed quotes " +
+      "(~15 min delayed) and Tradier sandbox (~15 min delayed) as fallbacks — every row " +
+      "names its chainSource. Rows are candidates for Ryan's review only — never a fill " +
+      "verification, never a trade.",
     results: rows,
     metrics: metricPopulations(structured, PMCC_METRICS),
     summary: {

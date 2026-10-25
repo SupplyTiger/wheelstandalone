@@ -148,6 +148,106 @@ export async function fetchOptionsSummary(ticker: string, expirationGte?: string
   };
 }
 
+// ---------------------------------------------------------------------------
+// LAYER 1 — Yahoo resilience (market-data stack, Oct 2026).
+//
+// WHY THIS EXISTS: production /api/pmcc-screener returned bare Yahoo skips
+// while /api/screener worked from Vercel seconds apart. Diagnosis: Yahoo
+// throttling Vercel's shared egress, worsened by the PMCC route firing two
+// chain-window fetches + bars + earnings concurrently per ticker. The fix
+// below does NOT touch fetchOptionsSummary or fetchDailyBars — the CSP route
+// keeps its exact old path, byte-identical behavior. Only the PMCC route
+// goes through the resilient wrapper, and only the PMCC route goes through
+// the multi-source stack (lib/marketData.ts).
+//
+// WHAT'S HERE:
+//   - Retry with exponential backoff + jitter on Yahoo failures (throttles
+//     are usually transient; a single attempt is not the answer).
+//   - A short-TTL in-memory chain cache with request coalescing: the same
+//     ticker+window fetched once per window, and concurrent callers share
+//     the in-flight promise instead of each hammering Yahoo. Serverless
+//     note: this cache lives per function instance — best effort, not a
+//     guarantee — but it still kills duplicate fetches inside one scan.
+//   - Cache failures are never cached: a rejected promise is evicted so a
+//     throttle doesn't poison the next five minutes.
+// All chains here are screening-grade data, never execution quotes.
+// ---------------------------------------------------------------------------
+
+/** Chain cache TTL: 5 minutes. Chains move slowly; a screen doesn't need tick-fresh data. */
+export const CHAIN_CACHE_TTL_MS = 300_000;
+const MAX_CHAIN_CACHE_ENTRIES = 200;
+
+type ChainCacheEntry = { expiresAt: number; promise: Promise<OptionsSummary> };
+const chainCache = new Map<string, ChainCacheEntry>();
+
+export function chainCacheKey(ticker: string, gte?: string, lte?: string): string {
+  return `${ticker.trim().toUpperCase()}|${gte ?? ""}|${lte ?? ""}`;
+}
+
+/** Test seam + memory hygiene: drop every cached chain. */
+export function clearChainCache(): void {
+  chainCache.clear();
+}
+
+export function chainCacheSize(): number {
+  return chainCache.size;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry a Yahoo call up to `attempts` times total, with exponential backoff
+ * (600ms, 1800ms) plus jitter. Returns the first success; throws the LAST
+ * error, so the surfaced message is the most recent failure, not the first.
+ */
+export async function withYahooRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts - 1) {
+        const delay = 600 * Math.pow(3, attempt) + Math.floor(Math.random() * 200);
+        await sleep(delay);
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * The PMCC route's chain fetch: retry + cache + coalescing around the
+ * unchanged fetchOptionsSummary. Same OptionsSummary shape out, so callers
+ * (and the CSP route, which does NOT use this) see no contract change.
+ */
+export function fetchOptionsSummaryResilient(
+  ticker: string,
+  expirationGte?: string,
+  expirationLte?: string,
+): Promise<OptionsSummary> {
+  const key = chainCacheKey(ticker, expirationGte, expirationLte);
+  const now = Date.now();
+  const hit = chainCache.get(key);
+  if (hit && hit.expiresAt > now) return hit.promise;
+  if (hit) chainCache.delete(key);
+
+  const promise = withYahooRetry(() => fetchOptionsSummary(ticker, expirationGte, expirationLte));
+  // A failure must not poison the cache: evict on rejection.
+  promise.catch(() => {
+    if (chainCache.get(key)?.promise === promise) chainCache.delete(key);
+  });
+  // Bound the map: drop the oldest entry when full.
+  if (chainCache.size >= MAX_CHAIN_CACHE_ENTRIES) {
+    const oldest = chainCache.keys().next().value;
+    if (oldest !== undefined) chainCache.delete(oldest);
+  }
+  chainCache.set(key, { expiresAt: now + CHAIN_CACHE_TTL_MS, promise });
+  return promise;
+}
+
 export type DailyBar = { date: string; close: number; high: number; low: number; volume: number };
 
 export async function fetchDailyBars(ticker: string, lookbackDays = 120): Promise<DailyBar[]> {

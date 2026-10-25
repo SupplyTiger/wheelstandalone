@@ -34,9 +34,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "No valid tickers provided" }, { status: 400 });
   }
 
-  // PMCC windows: LEAPS 12–24 months out, short leg 30–45 DTE. The route does
-  // two chain fetches per ticker (one per window), so keep universes modest —
-  // ~10 tickers per call stays inside the 60s limit; chunk larger universes.
+  // PMCC windows: LEAPS 12–24 months out, short leg 30–45 DTE. The route
+  // screens tickers SEQUENTIALLY (market-data stack: Yahoo resilient, then
+  // CBOE delayed, then Tradier sandbox) — concurrent bursts are what got
+  // Yahoo throttling on shared egress. Sequential is slower, so keep
+  // universes modest — ~10 tickers per call stays inside the 60s limit;
+  // chunk larger universes.
   const leapsDteMin = numberParam(url.searchParams.get("leapsDteMin"), 365);
   const leapsDteMax = numberParam(url.searchParams.get("leapsDteMax"), 730);
   const shortDteMin = numberParam(url.searchParams.get("shortDteMin"), 30);

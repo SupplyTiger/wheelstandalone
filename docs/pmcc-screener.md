@@ -2,7 +2,8 @@
 
 A diagonal-spread screen: a deep ITM long LEAPS call (surrogate shares) plus a
 short-dated short call sold against it. Read-only, never trades, never verifies
-a fill. Built on branch `pmcc-screener` (not deployed unless Ryan says so).
+a fill. Deployed to production Oct 2026 (PR #4, main `dc73cbdc`); chains now
+come from the market-data stack — see `docs/market-data-stack.md`.
 
 ## Route contract
 
