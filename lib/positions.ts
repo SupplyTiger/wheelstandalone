@@ -123,6 +123,23 @@ export function findShortPut(positions: AccountPosition[], ticker: string): Acco
   return positions.find((p) => p.ticker === t && p.kind === "put" && p.side === "short") ?? null;
 }
 
+/** The long call the account holds on this ticker, if any (a PMCC long leg). */
+export function findLongCall(positions: AccountPosition[], ticker: string): AccountPosition | null {
+  const t = ticker.toUpperCase();
+  return positions.find((p) => p.ticker === t && p.kind === "call" && p.side === "long") ?? null;
+}
+
+/**
+ * The short call the account already holds on this ticker, if any. A PMCC long
+ * covers exactly one short call: an existing short means a second short on the
+ * same ticker would be uncovered, so the PMCC screener blocks it (the call-side
+ * analog of the duplicate-short-put block).
+ */
+export function findShortCall(positions: AccountPosition[], ticker: string): AccountPosition | null {
+  const t = ticker.toUpperCase();
+  return positions.find((p) => p.ticker === t && p.kind === "call" && p.side === "short") ?? null;
+}
+
 /** Collateral already reserved by all short puts in the book (strike x 100 x contracts). */
 export function reservedPutCapital(positions: AccountPosition[]): number {
   return positions.reduce((sum, p) => {
