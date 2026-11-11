@@ -5,6 +5,7 @@ import { Activity, BriefcaseBusiness, Search, Target, TrendingUp } from "lucide-
 import { ScreenerTab } from "../components/ScreenerTab";
 import { PlaceholderTab } from "../components/PlaceholderTab";
 import { PositionsTab } from "../components/PositionsTab";
+import { PortfolioTab } from "../components/PortfolioTab";
 
 type TabId = "portfolio" | "action" | "screener" | "positions" | "activity";
 
@@ -14,7 +15,8 @@ type TabId = "portfolio" | "action" | "screener" | "positions" | "activity";
 // update them") but render an honest placeholder instead of the old Postgres-backed
 // version, since that backend isn't part of this rebuild and isn't configured here.
 // Positions come from the Plaid feed (scripts/refresh-positions-by-account.mjs);
-// SnapTrade is not used anywhere in this app.
+// Portfolio comes from the SnapTrade feed (app/api/portfolio, lib/snaptrade.ts) as a
+// BACKUP feed only — Plaid primary, Nano-1 Fidelity direct second, SnapTrade third.
 const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: "portfolio", label: "Portfolio", icon: <TrendingUp size={16} /> },
   { id: "action", label: "Action Center", icon: <Target size={16} /> },
@@ -23,8 +25,7 @@ const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: "activity", label: "Activity", icon: <Activity size={16} /> },
 ];
 
-const PLACEHOLDER_COPY: Record<Exclude<TabId, "screener" | "positions">, string> = {
-  portfolio: "Account value, open P&L vs. the $200K floor, and stock/options/cash allocation - pulled live once this tab is rebuilt.",
+const PLACEHOLDER_COPY: Record<Exclude<TabId, "screener" | "portfolio" | "positions">, string> = {
   action: "The 21 DTE Gamma Guard queue and other flagged positions that need a roll, close, or assignment decision this week.",
   activity: "Session log of scans run, syncs, and broker connection status.",
 };
@@ -59,6 +60,8 @@ export default function Home() {
           <ScreenerTab />
         ) : activeTab === "positions" ? (
           <PositionsTab />
+        ) : activeTab === "portfolio" ? (
+          <PortfolioTab />
         ) : (
           <PlaceholderTab
             title={TABS.find((t) => t.id === activeTab)!.label}
