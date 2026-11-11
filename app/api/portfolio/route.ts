@@ -3,10 +3,10 @@
 // Returns accounts (last 4 of the account number only), balances, stock positions and
 // option positions. No database, no writes, no brokerage actions.
 //
-// Access: if PORTFOLIO_API_TOKEN is set in the environment, callers must send it as
-// `x-portfolio-token` header (or ?token=). If it is NOT set, the route is open to anyone
-// who can reach the deployment — set it (or Vercel Deployment Protection) before this is
-// relied on in production.
+// Access: callers must send PORTFOLIO_API_TOKEN as the `x-portfolio-token`
+// header (or ?token=...). FAIL CLOSED: if the token is not set in the
+// environment, nobody gets in — the route is never open. Set
+// PORTFOLIO_API_TOKEN in Vercel (Production) before relying on this route.
 
 import { NextResponse } from "next/server";
 import {
@@ -30,7 +30,8 @@ type Raw = Record<string, unknown>;
 
 function authorized(request: Request): boolean {
   const expected = process.env.PORTFOLIO_API_TOKEN?.trim();
-  if (!expected) return true;
+  // Fail closed: no token configured means nobody is authorized.
+  if (!expected) return false;
   const url = new URL(request.url);
   const supplied = request.headers.get("x-portfolio-token") ?? url.searchParams.get("token");
   return supplied === expected;
