@@ -11,7 +11,7 @@ export const FULL_UNIVERSE = [
   "AAL","AAPL","ABB","ABBV","ABNB","ABT","ACHR","ADBE","ADI","ADSK","AFRM","AI","AMAT","AMBA",
   "AMD","AMGN","AMZN","ANET","ANSS","APP","ARM","ASML","ASTS","AVAV","AVGO","BA","BABA","BAH",
   "BBAI","BIDU","BIIB","BKNG","BMY","BSX","CCL","CDNS","CEG","CERT","CEVA","CF","CFLT","CGNX",
-  "CHWY","CIEN","CIFR","CLSK","CNC","COHR","COIN","COST","CRM","CRWD","CRWV","CVS","CVX","DAL",
+  "CHWY","CIEN","CIFR","CL","CLSK","CNC","COHR","COIN","COST","CRM","CRWD","CRWV","CVS","CVX","DAL",
   "DASH","DDOG","DE","DELL","DIS","DLR","DXCM","ELV","EMR","ENPH","EQIX","ESTC","ETN","EW","EXEL",
   "F","FANUY","FORM","FTNT","GE","GEV","GILD","GM","GOOGL","HCA","HCAT","HIMS","HON","HOOD","HUBB",
   "HUBS","HUM","IBB","IBM","ILMN","INTC","INTU","IONQ","IQV","IREN","ISRG","IWM","JCI","JNJ","JOBY",
@@ -19,8 +19,8 @@ export const FULL_UNIVERSE = [
   "MRVL","MSFT","MSTR","MU","NET","NFLX","NKE","NOW","NTRA","NU","NVDA","NXPI","OKLO","OKTA","ON","ORCL",
   "PANW","PATH","PEP","PFE","PLTR","PLUG","PSTG","PWR","PYPL","QCOM","QQQ","QS","RCL","RDW","RGTI",
   "RIOT","RKLB","ROK","RUN","RXRX","S","SBUX","SDGR","SHOP","SLV","SMCI","SNOW","SNPS","SOFI","SOUN","SPY",
-  "SQ","STX","SYM","T","TEAM","TEM","TER","TGT","TLT","TSLA","TSM","TWLO","TXN","UBER","ULTA","UNH",
-  "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLV","XOM","ZBRA","ZS","ZTS",
+  "SQ","STX","SYM","T","TEAM","TEM","TER","TFC","TGT","TLT","TSLA","TSM","TWLO","TXN","UBER","ULTA","UNH",
+  "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLV","XLU","XOM","ZBRA","ZS","ZTS",
   "TCEHY",
 ];
 
@@ -57,7 +57,7 @@ const RAW_CLUSTERS: { name: string; tickers: string[] }[] = [
   { name: "Crypto / High Beta", tickers: ["COIN", "MARA", "RIOT", "CIFR", "CLSK", "IREN", "WULF"] },
   { name: "Industrial Electrification", tickers: ["ETN", "HUBB", "GEV", "PWR"] },
   { name: "Consumer / Travel", tickers: ["ABNB", "DASH", "RCL", "CCL", "BKNG"] },
-  { name: "Yield / Defense Anchors", tickers: ["KO", "PEP", "JNJ", "XOM", "TLT", "SPY", "QQQ"] },
+  { name: "Yield / Defense Anchors", tickers: ["KO", "PEP", "JNJ", "XOM", "TLT", "SPY", "QQQ", "XLU"] },
   {
     name: "Healthcare / Medical",
     tickers: [
@@ -122,8 +122,8 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
     name: "Consumer Discretionary",
     tickers: ["ABNB", "BKNG", "CCL", "CHWY", "DASH", "LYFT", "RCL", "SHOP", "UBER", "F", "GM", "QS", "TSLA", "NKE", "ULTA", "TGT", "SBUX", "AMZN"],
   },
-  { name: "Consumer Staples", tickers: ["COST", "KO", "PEP", "WMT"] },
-  { name: "Financials", tickers: ["AFRM", "HOOD", "NU", "PYPL", "SOFI", "SQ"] },
+  { name: "Consumer Staples", tickers: ["COST", "KO", "PEP", "WMT", "CL"] },
+  { name: "Financials", tickers: ["AFRM", "HOOD", "NU", "PYPL", "SOFI", "SQ", "TFC"] },
   {
     name: "Healthcare & Life Sciences",
     tickers: [
@@ -147,7 +147,7 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
   },
   { name: "Energy & Utilities", tickers: ["CEG", "CVX", "ENPH", "OKLO", "PLUG", "RUN", "VST", "XOM"] },
   { name: "Crypto & Digital Assets", tickers: ["CIFR", "CLSK", "COIN", "IREN", "MARA", "MSTR", "RIOT", "WULF"] },
-  { name: "Diversified / Macro ETFs", tickers: ["IWM", "QQQ", "SLV", "SPY", "TLT"] },
+  { name: "Diversified / Macro ETFs", tickers: ["IWM", "QQQ", "SLV", "SPY", "TLT", "XLU"] },
 ];
 
 export const INDUSTRY_SECTORS = RAW_INDUSTRY_SECTORS.map((c) => ({

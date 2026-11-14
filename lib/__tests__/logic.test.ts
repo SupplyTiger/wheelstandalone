@@ -204,3 +204,102 @@ test("full pre-trade checklist: a near-ATM put (delta ~0.5) is BLOCKED even if e
   assert.equal(verdictFor(gates), "BLOCKED");
   assert.ok(gates.some((g) => g.gateName === "0.30 Delta Filter" && !g.passed));
 });
+
+// ---- Position-aware screening (lib/positions.ts) ----
+// Reference book: Plaid, Oct 24 2026. Prime Printer …5767: total $83,275.27,
+// free cash $2,958.27, short APP Nov 20 $280P x1 (reserved $28,000), short
+// META Mar'27 $850C, short AMZN Nov 20 $260C, long AMZN 100 ($24,800) +
+// SPCX 100. IRA Wheel …8749: total $29,032.77, free cash $1,136.11, no shorts.
+
+import {
+  parsePositionsParam,
+  findShortPut,
+  reservedPutCapital,
+  tickerExposure,
+  checkFreeCashGate,
+  duplicateShortPutReason,
+  type AccountPosition,
+} from "../positions";
+import { checkConcentrationGate } from "../gates";
+
+const PRIME_POSITIONS: AccountPosition[] = [
+  { ticker: "APP", kind: "put", side: "short", quantity: 1, strike: 280, expiry: "2026-11-20" },
+  { ticker: "META", kind: "call", side: "short", quantity: 1, strike: 850, expiry: "2027-03-19" },
+  { ticker: "AMZN", kind: "call", side: "short", quantity: 1, strike: 260, expiry: "2026-11-20" },
+  { ticker: "AMZN", kind: "stock", side: "long", quantity: 100, marketValue: 24800 },
+  { ticker: "SPCX", kind: "stock", side: "long", quantity: 100, marketValue: 14749 },
+];
+
+const IRA_POSITIONS: AccountPosition[] = [
+  { ticker: "META", kind: "stock", side: "long", quantity: 20.139, marketValue: 12941.72 },
+  { ticker: "SPCX", kind: "call", side: "long", quantity: 1, strike: 150, expiry: "2028-12-15" },
+];
+
+test("parsePositionsParam: blank returns null (position-blind), valid JSON normalizes", () => {
+  assert.equal(parsePositionsParam(null), null);
+  assert.equal(parsePositionsParam("  "), null);
+  const parsed = parsePositionsParam('[{"ticker":"app","kind":"put","side":"short","strike":280}]');
+  assert.equal(parsed?.length, 1);
+  assert.equal(parsed?.[0].ticker, "APP");
+  assert.equal(parsed?.[0].quantity, 1); // defaulted
+});
+
+test("parsePositionsParam: malformed input throws (never silently position-blind)", () => {
+  assert.throws(() => parsePositionsParam("not json"));
+  assert.throws(() => parsePositionsParam('{"ticker":"APP"}')); // not an array
+  assert.throws(() => parsePositionsParam('[{"ticker":"APP!","kind":"put","side":"short"}]'));
+  assert.throws(() => parsePositionsParam('[{"ticker":"APP","kind":"straddle","side":"short"}]'));
+  assert.throws(() => parsePositionsParam('[{"ticker":"APP","kind":"put","side":"short","strike":-5}]'));
+});
+
+test("findShortPut: Prime APP short put found; META short call is not a put; IRA has no APP put", () => {
+  const app = findShortPut(PRIME_POSITIONS, "APP");
+  assert.ok(app);
+  assert.equal(app?.strike, 280);
+  assert.equal(findShortPut(PRIME_POSITIONS, "META"), null);
+  assert.equal(findShortPut(IRA_POSITIONS, "APP"), null);
+});
+
+test("reservedPutCapital: Prime's single short put reserves exactly $28,000", () => {
+  assert.equal(reservedPutCapital(PRIME_POSITIONS), 28000);
+  assert.equal(reservedPutCapital(IRA_POSITIONS), 0);
+});
+
+test("tickerExposure: Prime APP is $28,000 reserved; Prime AMZN is $24,800 shares (short call adds nothing)", () => {
+  assert.equal(tickerExposure(PRIME_POSITIONS, "APP"), 28000);
+  assert.equal(tickerExposure(PRIME_POSITIONS, "AMZN"), 24800);
+  assert.equal(tickerExposure(IRA_POSITIONS, "APP"), 0);
+});
+
+test("checkFreeCashGate: a $23,500 CSP does not fit Prime's $2,958.27 free cash; a $2,000 one does; unknown cash skips", () => {
+  const blocked = checkFreeCashGate(23500, 2958.27);
+  assert.ok(blocked && !blocked.passed);
+  assert.match(blocked?.reason ?? "", /no margin/);
+  assert.equal(checkFreeCashGate(2000, 2958.27)?.passed, true);
+  assert.equal(checkFreeCashGate(23500, null), null);
+});
+
+test("concentration with existing book: APP at $23,500 new on $28,000 existing blows the 30% cap at $83,275", () => {
+  const gate = checkConcentrationGate({
+    ticker: "APP", kind: "put", strike: 235, maxPain: 300, marketDirection: "red",
+    daysToEarnings: null, newCapital: 23500, accountValue: 83275, currentTickerValue: 28000,
+  });
+  assert.ok(gate && !gate.passed);
+  assert.match(gate?.reason ?? "", /61\.8%/);
+});
+
+test("AMZN preservation: $23,500 capital is 28.2% of $83,275 (15% cap blocks) and 5d earnings blocks", () => {
+  const collateral = checkMaxCollateralGate({
+    ticker: "AMZN", kind: "put", strike: 235, maxPain: 290, marketDirection: "red",
+    daysToEarnings: 5, newCapital: 23500, accountValue: 83275,
+  });
+  assert.ok(collateral && !collateral.passed);
+  assert.match(collateral?.reason ?? "", /28\.2%/);
+  assert.equal(checkEarningsGate(5).passed, false);
+});
+
+test("duplicateShortPutReason names the contract and the one-put-per-underlying rule", () => {
+  const reason = duplicateShortPutReason(findShortPut(PRIME_POSITIONS, "APP")!);
+  assert.match(reason, /Already short a APP put/);
+  assert.match(reason, /one short put per underlying/);
+});

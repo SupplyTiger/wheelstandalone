@@ -9,10 +9,12 @@ import { PositionsTab } from "../components/PositionsTab";
 type TabId = "portfolio" | "action" | "screener" | "positions" | "activity";
 
 // Same 5 tabs as the original dashboard (Portfolio, Action Center, Screener, Positions,
-// Activity). Screener is the only one rebuilt on the new TypeScript/yahoo-finance2 stack so
-// far - the rest stay visible (per "work on one tab at a time, leave the others until we
-// update them") but render an honest placeholder instead of the old Postgres/SnapTrade-backed
+// Activity). Screener and Positions are rebuilt on the new TypeScript/yahoo-finance2 stack
+// so far - the rest stay visible (per "work on one tab at a time, leave the others until we
+// update them") but render an honest placeholder instead of the old Postgres-backed
 // version, since that backend isn't part of this rebuild and isn't configured here.
+// Positions come from the Plaid feed (scripts/refresh-positions-by-account.mjs);
+// SnapTrade is not used anywhere in this app.
 const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
   { id: "portfolio", label: "Portfolio", icon: <TrendingUp size={16} /> },
   { id: "action", label: "Action Center", icon: <Target size={16} /> },

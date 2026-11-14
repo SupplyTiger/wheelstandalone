@@ -18,6 +18,14 @@ function normalCdf(x: number): number {
   return 0.5 * (1 + sign * y);
 }
 
+// Returns the call's delta (always in [0, 1]) or null on the same bad inputs.
+// By put-call parity on identical Black-Scholes inputs, call delta = put delta + 1
+// exactly (N(d1) vs N(d1) - 1) — no second formula to drift out of sync with putDelta.
+export function callDelta(spot: number | null, strike: number | null, dte: number | null, ivDecimal: number | null): number | null {
+  const p = putDelta(spot, strike, dte, ivDecimal);
+  return p === null ? null : p + 1;
+}
+
 // Returns the put's delta (always in [-1, 0]) or null when inputs can't produce a
 // meaningful value (missing/zero IV, non-positive spot/strike/DTE).
 export function putDelta(spot: number | null, strike: number | null, dte: number | null, ivDecimal: number | null): number | null {

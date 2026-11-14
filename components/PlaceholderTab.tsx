@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 // Honest stand-in for a tab that hasn't been rebuilt yet. The old dashboard's Portfolio /
-// Action Center / Positions / Activity tabs were wired to a Postgres + SnapTrade backend
+// Action Center / Activity tabs were wired to a Postgres backend
 // that isn't part of this rebuild (and isn't configured here) - rather than show fabricated
 // numbers or a broken "Connect" button, this just says plainly what's coming and when.
 // Matches the Screener tab's card styling so it reads as one app, not a stub bolted on.

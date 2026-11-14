@@ -10,6 +10,10 @@ build/
 *.local
 
 # position snapshots contain live account data - never committed.
-# The refresh script regenerates public/positions-live.json from Plaid;
-# deploys ship the working-tree copy, not a git-tracked one.
+# The refresh scripts regenerate these from Plaid; deploys ship the
+# working-tree copy, not a git-tracked one. This repo is public: committing
+# a live snapshot would publish the book. The screener's position-awareness
+# therefore travels as query params at call time (see docs/positions-feed.md),
+# not as a file in git.
 public/positions-live.json
+public/positions-by-account.json
