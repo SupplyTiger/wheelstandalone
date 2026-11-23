@@ -20,7 +20,7 @@ export const FULL_UNIVERSE = [
   "PANW","PATH","PEP","PFE","PLTR","PLUG","PSTG","PWR","PYPL","QCOM","QQQ","QS","RCL","RDW","RGTI",
   "RIOT","RKLB","ROK","RUN","RXRX","S","SBUX","SDGR","SHOP","SLV","SMCI","SNOW","SNPS","SOFI","SOUN","SPY",
   "SQ","STX","SYM","T","TEAM","TEM","TER","TGT","TLT","TSLA","TSM","TWLO","TXN","UBER","ULTA","UNH",
-  "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLV","XOM","ZBRA","ZS","ZTS",
+  "VEEV","VKTX","VRT","VRTX","VST","VTRS","VZ","WDC","WMT","WULF","XBI","XLK","XLV","XOM","ZBRA","ZS","ZTS",
   "TCEHY",
 ];
 
@@ -115,6 +115,8 @@ const RAW_INDUSTRY_SECTORS: { name: string; tickers: string[] }[] = [
       // Megacap platform/enterprise tech (AMZN goes to Consumer Discretionary instead -
       // its core business is retail, not a platform/OS/chip business like these three)
       "AAPL", "MSFT", "ORCL",
+      // Technology sector ETF
+      "XLK",
     ],
   },
   { name: "Communication Services", tickers: ["BABA", "BIDU", "DIS", "GOOGL", "META", "NFLX", "T", "TCEHY", "TWLO", "VZ"] },
